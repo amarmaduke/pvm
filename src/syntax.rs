@@ -1,6 +1,9 @@
 
 use machine;
 
+enum Expression {
+   
+}
 
 /*
    syntax for grammar:
@@ -20,5 +23,5 @@ use machine;
 */
 
 fn translate(grammar : &str) -> machine::Machine {
-   machine::Machine::new()
+   //machine::Machine::new()
 }
