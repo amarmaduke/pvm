@@ -2,7 +2,7 @@
 use machine;
 
 enum Expression {
-   
+
 }
 
 /*
@@ -22,6 +22,6 @@ enum Expression {
 }
 */
 
-fn translate(grammar : &str) -> machine::Machine {
-   //machine::Machine::new()
+fn translate(grammar: &str) {
+    //machine::Machine::new()
 }
