@@ -17,6 +17,8 @@ pub enum Instruction {
     Commit(isize),
     BackCommit(isize),
     PartialCommit(isize),
+    PushPos,
+    SavePos,
     Fail,
     FailTwice,
     Stop
@@ -25,14 +27,22 @@ pub enum Instruction {
 pub struct Machine {
     program: Vec<Instruction>,
     stack: Vec<StackFrame>,
+    pos_stack : Vec<usize>,
+    pub result : Vec<(usize, usize)>,
     pc: isize,
     i: usize,
-    fail: bool,
+    pub fail: bool,
+}
+
+pub struct Token {
+
 }
 
 impl Machine {
     pub fn execute(&mut self, input : Vec<u8>) {
         self.stack.clear();
+        self.pos_stack.clear();
+        self.result.clear();
         self.pc = 0;
         self.i = 0;
         self.fail = false;
@@ -44,6 +54,8 @@ impl Machine {
                         self.pc = ret;
                         self.i = j;
                         self.fail = false;
+                    } else {
+                        self.pos_stack.pop();
                     }
                 } else {
                     break;
@@ -120,6 +132,16 @@ impl Machine {
                             }
                         }
                     },
+                    Instruction::PushPos => {
+                        self.pos_stack.push(self.i);
+                        self.pc += 1;
+                    },
+                    Instruction::SavePos => {
+                        if let Some(j) = self.pos_stack.pop() {
+                            self.result.push((j, self.i));
+                        }
+                        self.pc += 1;
+                    },
                     Instruction::Fail => {
                         self.fail = true;
                     },
@@ -140,6 +162,8 @@ impl Machine {
         Machine {
             program: program,
             stack: vec![],
+            pos_stack: vec![],
+            result: vec![],
             pc: 0,
             i: 0,
             fail: false,
@@ -151,7 +175,7 @@ impl Machine {
 mod tests {
     use super::*;
 
-    fn execute_test(program : Vec<Instruction>, subjects : Vec<&str>, expected : Vec<bool>) {
+    fn execute_test(program : Vec<Instruction>, subjects : &Vec<&str>, expected : &Vec<bool>) {
         let mut machine = Machine::new(program);
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
@@ -169,7 +193,7 @@ mod tests {
         ];
         let subjects = vec!["a", "aa"];
         let expected = vec![true, false];
-        execute_test(program, subjects, expected);
+        execute_test(program, &subjects, &expected);
     }
 
     #[test]
@@ -182,7 +206,7 @@ mod tests {
         ];
         let subjects = vec!["", "a", "aaa", "b"];
         let expected = vec![true, true, true, false];
-        execute_test(program, subjects, expected);
+        execute_test(program, &subjects, &expected);
     }
 
     #[test]
@@ -196,7 +220,7 @@ mod tests {
         ];
         let subjects = vec!["a", "aaa", "b", ""];
         let expected = vec![true, true, false, false];
-        execute_test(program, subjects, expected);
+        execute_test(program, &subjects, &expected);
     }
 
     #[test]
@@ -208,7 +232,7 @@ mod tests {
         ];
         let subjects = vec!["ab", "a", "b", ""];
         let expected = vec![true, false, false, false];
-        execute_test(program, subjects, expected);
+        execute_test(program, &subjects, &expected);
     }
 
     #[test]
@@ -225,7 +249,122 @@ mod tests {
         ];
         let subjects = vec!["a", "b", "c", "abc", ""];
         let expected = vec![true, true, true, false, false];
-        execute_test(program, subjects, expected);
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn simple_subparser() { // main { 'a'b+ } b { 'b' }
+        let program1 = vec![
+            Instruction::Char('a' as u8), //-- main
+            Instruction::Call(5),         // | (b)
+            Instruction::Choice(3),       // |
+            Instruction::Call(3),         // | (b)
+            Instruction::Commit(-2),      // |
+            Instruction::Stop,            //-'
+            Instruction::Char('b' as u8), //-- b
+            Instruction::Return           //-' 
+        ];
+        let program2 = vec![
+            Instruction::Call(4),         // -- entry point (main)
+            Instruction::Jump(9),         // -' (exit point)
+            Instruction::Char('b' as u8), // -- b
+            Instruction::Return,          // -'
+            Instruction::Char('a' as u8), // -- main
+            Instruction::Call(-3),        //  | (b)
+            Instruction::Choice(3),       //  |
+            Instruction::Call(-5),        //  | (b)
+            Instruction::Commit(-2),      //  |
+            Instruction::Return,          // -'
+            Instruction::Stop             // -- exit point
+        ];
+        let subjects = vec!["ab", "abbb", "a", ""];
+        let expected = vec![true, true, false, false];
+        execute_test(program1, &subjects, &expected);
+        execute_test(program2, &subjects, &expected);
+    }
+
+    #[test]
+    fn three_subparser() {
+        /*
+            main { a b c }
+            a { 'a' / 'z' }
+            b { 'b'* }
+            c { a / b }
+        */
+        let program = vec![
+            Instruction::Call(16),        // -- entry point (main)
+            Instruction::Jump(19),        // -' (exit point)
+            Instruction::Choice(3),       // -- a
+            Instruction::Char('a' as u8), //  |
+            Instruction::Commit(2),       //  |
+            Instruction::Char('z' as u8), //  |
+            Instruction::Return,          // -'
+            Instruction::Choice(3),       // -- b
+            Instruction::Char('b' as u8), //  |
+            Instruction::Commit(-2),      //  |
+            Instruction::Return,          // -'
+            Instruction::Choice(3),       // -- c
+            Instruction::Call(-10),       //  | (a)
+            Instruction::Commit(2),       //  |
+            Instruction::Call(-7),        //  | (b)
+            Instruction::Return,          // -'
+            Instruction::Call(-14),       // -- main (a)
+            Instruction::Call(-10),       //  | (b)
+            Instruction::Call(-7),        //  | (c)
+            Instruction::Return,          // -'
+            Instruction::Stop             // -- exit point
+        ];
+        let subjects = vec!["a", "ab", "aba", "abba", "z", "zbbaz", "garbage", ""];
+        let expected = vec![true, true, true, true, true, false, false, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn self_reference_impossible_parser() {
+        /*
+            main { 'a'b;main }
+            b { 'b'b }
+        */
+        let program = vec![
+            Instruction::Call(5),         // -- entry point (main)
+            Instruction::Jump(8),         // -' (exit point)
+            Instruction::Char('b' as u8), // -- b
+            Instruction::Call(-1),        //  | (b)
+            Instruction::Return,          // -'
+            Instruction::Char('a' as u8), // -- main
+            Instruction::Call(-4),        //  | (b)
+            Instruction::Call(-2),        //  | (main)
+            Instruction::Return,          // -'
+            Instruction::Stop             // -- exit point
+        ];
+        let subjects = vec!["a", "ab", "ababab", ""];
+        let expected = vec![false, false, false, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn simple_token_stream_result() { // main { 'a'b+ } b { 'b' }
+        let program = vec![
+            Instruction::Call(6),         // -- entry point (main)
+            Instruction::Jump(13),         // -' (exit point)
+            Instruction::PushPos,         // -- b
+            Instruction::Char('b' as u8), //  |
+            Instruction::SavePos,         //  |
+            Instruction::Return,          // -'
+            Instruction::PushPos,         // -- main
+            Instruction::Char('a' as u8), //  |
+            Instruction::Call(-6),        //  | (b)
+            Instruction::Choice(3),       //  |
+            Instruction::Call(-8),        //  | (b)
+            Instruction::Commit(-2),      //  |
+            Instruction::SavePos,         //  |
+            Instruction::Return,          // -'
+            Instruction::Stop             // -- exit point
+        ];
+        let mut machine = Machine::new(program);
+        machine.execute("ab".to_string().into_bytes());
+        println!("{:?}", machine.result);
+        assert!(false);
     }
 
 }

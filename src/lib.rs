@@ -1,6 +1,6 @@
 
 mod ast;
-mod machine;
+pub mod machine;
 mod syntax;
 
 pub fn parse(text: &str) {
