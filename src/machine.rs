@@ -10,6 +10,7 @@ pub enum Instruction {
     TestChar(u8, isize),
     Any,
     TestAny(usize, isize),
+    CharRange(u8, u8),
     Choice(isize),
     Jump(isize),
     Call(isize),
@@ -21,152 +22,175 @@ pub enum Instruction {
     SavePos,
     Fail,
     FailTwice,
-    Stop
+    Stop,
+    ToggleSkip
 }
 
 pub struct Machine {
     program: Vec<Instruction>,
-    stack: Vec<StackFrame>,
-    pos_stack : Vec<usize>,
-    pub result : Vec<(usize, usize)>,
-    pc: isize,
-    i: usize,
-    pub fail: bool,
-}
-
-pub struct Token {
-
+    pub skip : Vec<(u8, u8)>,
+    pub skip_on : bool
 }
 
 impl Machine {
-    pub fn execute(&mut self, input : Vec<u8>) {
-        self.stack.clear();
-        self.pos_stack.clear();
-        self.result.clear();
-        self.pc = 0;
-        self.i = 0;
-        self.fail = false;
+
+    pub fn skip_parser(&mut self, x : u8) -> bool {
+        let mut result = false;
+        for t in &self.skip {
+            result |= x >= t.0 && x <= t.1;
+        }
+
+        result
+    }
+
+    pub fn execute(&mut self, input : Vec<u8>) -> Result<Vec<(usize, usize)>, u8> {
+        let mut stack = Vec::new();
+        let mut pos_stack = Vec::new();
+        let mut result = Vec::new();
+        let mut pc = 0;
+        let mut i = 0;
+        let mut fail = false;
 
         loop {
-            if self.fail {
-                if let Some(frame) = self.stack.pop() {
+            if self.skip_on {
+                while i < input.len() && self.skip_parser(input[i]) {
+                    i += 1;
+                }
+            }
+
+            if fail {
+                if let Some(frame) = stack.pop() {
                     if let StackFrame::Backtrack(ret, j) = frame {
-                        self.pc = ret;
-                        self.i = j;
-                        self.fail = false;
+                        pc = ret;
+                        i = j;
+                        fail = false;
                     } else {
-                        self.pos_stack.pop();
+                        pos_stack.pop();
                     }
                 } else {
                     break;
                 }
             } else {
-                match self.program[self.pc as usize] {
+                match self.program[pc as usize] {
                     Instruction::Char(c) => {
-                        if self.i < input.len() && input[self.i] == c {
-                            self.pc += 1;
-                            self.i += 1;
+                        if i < input.len() && input[i] == c {
+                            pc += 1;
+                            i += 1;
                         } else {
-                            self.fail = true;
+                            fail = true;
                         }
                     },
                     Instruction::TestChar(c, j) => {
-                        if self.i < input.len() && input[self.i] == c {
-                            self.pc += 1;
-                            self.i += 1;
+                        if i < input.len() && input[i] == c {
+                            pc += 1;
+                            i += 1;
                         } else {
-                            self.pc += j;
+                            pc += j;
                         }
                     },
                     Instruction::Any => {
-                        if self.i + 1 < input.len() {
-                            self.pc += 1;
-                            self.i += 1;
+                        if i + 1 < input.len() {
+                            pc += 1;
+                            i += 1;
                         } else {
-                            self.fail = true;
+                            fail = true;
                         }
                     },
                     Instruction::TestAny(n, j) => {
-                        if self.i + n < input.len() {
-                            self.pc += 1;
-                            self.i += n;
+                        if i + n < input.len() {
+                            pc += 1;
+                            i += n;
                         } else {
-                            self.pc += j;
+                            pc += j;
+                        }
+                    },
+                    Instruction::CharRange(l, r) => {
+                        if i < input.len() && input[i] >= l && input[i] <= r {
+                            pc += 1;
+                            i += 1;
+                        } else {
+                            fail = true;
                         }
                     },
                     Instruction::Choice(j) => {
-                        self.stack.push(StackFrame::Backtrack(self.pc + j, self.i));
-                        self.pc += 1;
+                        stack.push(StackFrame::Backtrack(pc + j, i));
+                        pc += 1;
                     }
                     Instruction::Jump(j) => {
-                        self.pc += j;
+                        pc += j;
                     }
                     Instruction::Call(j) => {
-                        self.stack.push(StackFrame::Return(self.pc + 1));
-                        self.pc += j;
+                        stack.push(StackFrame::Return(pc + 1));
+                        pc += j;
                     }
                     Instruction::Return => {
-                        if let Some(frame) = self.stack.pop() {
+                        if let Some(frame) = stack.pop() {
                             if let StackFrame::Return(ret) = frame {
-                                self.pc = ret;
+                                pc = ret;
                             }
                         }
                     }
                     Instruction::Commit(j) => {
-                        self.stack.pop();
-                        self.pc += j;
+                        stack.pop();
+                        pc += j;
                     },
                     Instruction::BackCommit(j) => {
-                        if let Some(frame) = self.stack.pop() {
+                        if let Some(frame) = stack.pop() {
                             if let StackFrame::Backtrack(p, k) = frame {
-                                self.pc += j;
-                                self.i = k;
+                                pc += j;
+                                i = k;
                             }
                         }
                     },
                     Instruction::PartialCommit(j) => {
-                        if let Some(frame) = self.stack.pop() {
+                        if let Some(frame) = stack.pop() {
                             if let StackFrame::Backtrack(p, k) = frame {
-                                self.pc += j;
-                                self.stack.push(StackFrame::Backtrack(p, self.i));
+                                pc += j;
+                                stack.push(StackFrame::Backtrack(p, i));
                             }
                         }
                     },
                     Instruction::PushPos => {
-                        self.pos_stack.push(self.i);
-                        self.pc += 1;
+                        pos_stack.push(i);
+                        pc += 1;
                     },
                     Instruction::SavePos => {
-                        if let Some(j) = self.pos_stack.pop() {
-                            self.result.push((j, self.i));
+                        if let Some(j) = pos_stack.pop() {
+                            result.push((j, i));
                         }
-                        self.pc += 1;
+                        pc += 1;
                     },
                     Instruction::Fail => {
-                        self.fail = true;
+                        fail = true;
                     },
                     Instruction::FailTwice => {
-                        self.stack.pop();
-                        self.fail = true;
+                        stack.pop();
+                        fail = true;
                     },
                     Instruction::Stop => {
-                        if self.i < input.len() { self.fail = true; }
+                        if i < input.len() { fail = true; }
                         break;
+                    },
+                    Instruction::ToggleSkip => {
+                        self.skip_on = !self.skip_on;
+                        pc += 1;
                     }
                 }
             }
+        }
+
+        if !fail {
+            Ok(result)
+        } else {
+            Err(0)
         }
     }
 
     pub fn new(program : Vec<Instruction>) -> Machine {
         Machine {
             program: program,
-            stack: vec![],
-            pos_stack: vec![],
-            result: vec![],
-            pc: 0,
-            i: 0,
-            fail: false,
+            skip: vec![],
+            skip_on: false
         }
     }
 }
@@ -179,9 +203,27 @@ mod tests {
         let mut machine = Machine::new(program);
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            machine.execute(subjects[i].to_string().into_bytes());
-            println!("{}", machine.fail);
-            assert!(!machine.fail == expected[i]);
+            let result = machine.execute(subjects[i].to_string().into_bytes());
+            let fail = result.is_err();
+            println!("{}", subjects[i]);
+            assert!(!fail == expected[i]);
+        }
+    }
+
+    fn execute_test_with_skip(program : Vec<Instruction>,
+        skip : Vec<(u8, u8)>,
+        subjects : &Vec<&str>,
+        expected : &Vec<bool>) {
+
+        let mut machine = Machine::new(program);
+        machine.skip = skip;
+        machine.skip_on = true;
+        assert!(subjects.len() == expected.len());
+        for i in 0..expected.len() {
+            let result = machine.execute(subjects[i].to_string().into_bytes());
+            let fail = result.is_err();
+            println!("{}", subjects[i]);
+            assert!(!fail == expected[i]);
         }
     }
 
@@ -346,7 +388,7 @@ mod tests {
     fn simple_token_stream_result() { // main { 'a'b+ } b { 'b' }
         let program = vec![
             Instruction::Call(6),         // -- entry point (main)
-            Instruction::Jump(13),         // -' (exit point)
+            Instruction::Jump(13),        // -' (exit point)
             Instruction::PushPos,         // -- b
             Instruction::Char('b' as u8), //  |
             Instruction::SavePos,         //  |
@@ -361,10 +403,59 @@ mod tests {
             Instruction::Return,          // -'
             Instruction::Stop             // -- exit point
         ];
-        let mut machine = Machine::new(program);
-        machine.execute("ab".to_string().into_bytes());
-        println!("{:?}", machine.result);
-        assert!(false);
+        let subjects = vec!["ab", "abbbb", "a", "b"];
+        let expected = vec![true, true, false, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn simple_char_range() { // main { ['a'..'z']* }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(3),
+            Instruction::CharRange('a' as u8, 'z' as u8),
+            Instruction::Commit(-2),
+            Instruction::Return
+        ];
+        let subjects = vec!["a", "b", "z", "aaa", "zzz", "abcdefghijkxyz", "a.z"];
+        let expected = vec![true, true, true, true, true, true, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn skip_parser() { // main { ('a';'b')* } skip { [' '] }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(4),
+            Instruction::Char('a' as u8),
+            Instruction::Char('b' as u8),
+            Instruction::Commit(-3),
+            Instruction::Return
+        ];
+        let skip = vec![(' ' as u8, ' ' as u8)];
+        let subjects = vec!["ababab", "ab a b ab", "ab a  b  a b", " a   b ", "c"];
+        let expected = vec![true, true, true, true, false];
+        execute_test_with_skip(program, skip, &subjects, &expected);
+    }
+
+    #[test]
+    fn skip_parser_with_toggle() { // main { #s;'a';' ';#s;'b' } skip { [' '] }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::ToggleSkip,
+            Instruction::Char('a' as u8),
+            Instruction::Char(' ' as u8),
+            Instruction::ToggleSkip,
+            Instruction::Char('b' as u8),
+            Instruction::Return
+        ];
+        let skip = vec![(' ' as u8, ' ' as u8)];
+        let subjects = vec!["a b", "a    b", "   a   b    ", "ab"];
+        let expected = vec![true, true, true, false];
+        execute_test_with_skip(program, skip, &subjects, &expected);
     }
 
 }
