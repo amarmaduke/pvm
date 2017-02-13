@@ -1,10 +1,12 @@
 
 
+#[derive(Debug, Copy, Clone)]
 enum StackFrame {
     Return(isize),
     Backtrack(isize, usize),
 }
 
+#[derive(Debug, Copy, Clone)]
 pub enum Instruction {
     Char(u8),
     TestChar(u8, isize),
