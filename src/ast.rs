@@ -30,6 +30,7 @@ pub enum Pattern {
 impl Grammar {
     pub fn compile(&mut self) -> Vec<machine::Instruction> {
         let mut rules = Vec::new();
+        let mut lookup = vec![];
 
         for p in &self.rules {
             rules.push(Grammar::compile_pattern(p));
@@ -40,11 +41,22 @@ impl Grammar {
             machine::Instruction::Stop
         ];
 
+        let mut k = 2;
         for mut rule in rules {
+            lookup.push(k);
+            result.push(machine::Instruction::PushPos);
             result.append(&mut rule);
+            result.push(machine::Instruction::SavePos);
             result.push(machine::Instruction::Return);
+            k += 3 + rule.len();
         }
 
+        for i in 0..result.len() {
+            if let machine::Instruction::Call(r) = result[i] {
+                let dist = lookup[r as usize] - i;
+                result[i] = machine::Instruction::Call(dist as isize);
+            }
+        }
         result
     }
 
@@ -133,4 +145,3 @@ impl Grammar {
         vec![]
     }
 }
-
