@@ -76,7 +76,21 @@ impl Grammar {
     }
 
     fn compile_char_class(data : &Vec<(u8, Option<u8>)>) -> Vec<machine::Instruction> {
-        vec![]
+        let mut result = vec![];
+        let mut jump = data.len();
+        for range in data.iter().take(data.len() - 1) {
+            let left = (*range).0;
+            let right = (*range).1.unwrap_or(left);
+            result.push(machine::Instruction::CharRangeLink(left, right, jump as isize));
+            jump -= 1;
+        }
+        
+        if let Some(last) = data.iter().last() {
+            let left = (*last).0;
+            let right = (*last).1.unwrap_or(left);
+            result.push(machine::Instruction::CharRange(left, right));
+        }
+        result
     }
 
     fn compile_char_sequence(data : &Vec<u8>) -> Vec<machine::Instruction> {
@@ -112,7 +126,7 @@ impl Grammar {
         let mut result = vec![];
         result.push(machine::Instruction::Choice(instr_count + 2));
         result.append(&mut inner);
-        result.push(machine::Instruction::Commit(-instr_count - 1));
+        result.push(machine::Instruction::PartialCommit(-instr_count));
         result
     }
 
@@ -123,7 +137,7 @@ impl Grammar {
         result.append(&mut inner);
         result.push(machine::Instruction::Choice(instr_count + 2));
         result.append(&mut inner);
-        result.push(machine::Instruction::Commit(-instr_count - 1));
+        result.push(machine::Instruction::PartialCommit(-instr_count));
         result
     }
 
@@ -138,10 +152,30 @@ impl Grammar {
     }
 
     fn compile_optional(data : &Box<Pattern>) -> Vec<machine::Instruction> {
-        vec![]
+        let mut result = vec![];
+        let mut inner = Grammar::compile_pattern(data);
+
+        result.push(machine::Instruction::Choice(inner.len() as isize + 2));
+        result.append(&mut inner);
+        result.push(machine::Instruction::Commit(1));
+        result
     }
 
     fn compile_lookahead(success : bool, data : &Box<Pattern>) -> Vec<machine::Instruction> {
-        vec![]
+        let mut result = vec![];
+        let mut inner = Grammar::compile_pattern(data);
+        let mut instr_count = inner.len() as isize;
+        if success {
+            result.push(machine::Instruction::Choice(instr_count + 5));
+            result.push(machine::Instruction::Choice(instr_count + 2));
+            result.append(&mut inner);
+            result.push(machine::Instruction::FailTwice);
+            result.push(machine::Instruction::FailTwice);
+        } else {
+            result.push(machine::Instruction::Choice(instr_count + 2));
+            result.append(&mut inner);
+            result.push(machine::Instruction::FailTwice);
+        }
+        result
     }
 }

@@ -6,13 +6,14 @@ enum StackFrame {
     Backtrack(isize, usize),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Instruction {
     Char(u8),
     TestChar(u8, isize),
     Any,
     TestAny(usize, isize),
     CharRange(u8, u8),
+    CharRangeLink(u8, u8, isize),
     Choice(isize),
     Jump(isize),
     Call(isize),
@@ -114,6 +115,14 @@ impl Machine {
                             fail = true;
                         }
                     },
+                    Instruction::CharRangeLink(l, r, j) => {
+                        if i < input.len() && input[i] >= l && input[i] <= r {
+                            pc += j;
+                            i += 1;
+                        } else {
+                            pc += 1;
+                        }
+                    }
                     Instruction::Choice(j) => {
                         stack.push(StackFrame::Backtrack(pc + j, i));
                         pc += 1;
@@ -145,10 +154,14 @@ impl Machine {
                         }
                     },
                     Instruction::PartialCommit(j) => {
-                        if let Some(frame) = stack.pop() {
-                            if let StackFrame::Backtrack(p, k) = frame {
-                                pc += j;
-                                stack.push(StackFrame::Backtrack(p, i));
+                        if stack.len() > 1 {
+                            pc += j;
+                            let pos = stack.len() - 1;
+                            match stack[pos] {
+                                StackFrame::Backtrack(p, k) => { 
+                                    stack[pos] = StackFrame::Backtrack(p, i);
+                                },
+                                _ => { }
                             }
                         }
                     },
@@ -426,6 +439,23 @@ mod tests {
     }
 
     #[test]
+    fn char_range_links() { // main { ['a'..'b''c'..'c''e'..'e']* }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(5),
+            Instruction::CharRangeLink('a' as u8, 'b' as u8, 3),
+            Instruction::CharRangeLink('c' as u8, 'c' as u8, 2),
+            Instruction::CharRange('e' as u8, 'e' as u8),
+            Instruction::Commit(-4),
+            Instruction::Return
+        ];
+        let subjects = vec!["a", "b", "c", "e", "abce", "ecba", "acbe", "d", "f", "abcde"];
+        let expected = vec![true, true, true, true, true, true, true, false, false ,false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
     fn skip_parser() { // main { ('a';'b')* } skip { [' '] }
         let program = vec![
             Instruction::Call(2),
@@ -460,4 +490,74 @@ mod tests {
         execute_test_with_skip(program, skip, &subjects, &expected);
     }
 
+    #[test]
+    fn partial_commit_zero_or_more() { // main { 'a'* }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(3),
+            Instruction::Char('a' as u8),
+            Instruction::PartialCommit(-1),
+            Instruction::Return
+        ];
+        let subjects = vec!["", "a", "aaa", "b"];
+        let expected = vec![true, true, true, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn not_predicate() { // main { !'a' ['a'..'b']+ }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(3),
+            Instruction::Char('a' as u8),
+            Instruction::FailTwice,
+            Instruction::CharRange('a' as u8, 'b' as u8),
+            Instruction::Choice(3),
+            Instruction::CharRange('a' as u8, 'b' as u8),
+            Instruction::PartialCommit(-1),
+            Instruction::Return
+        ];
+        let subjects = vec!["b", "ba", "bababbaa", "a", "ab"];
+        let expected = vec![true, true, true, false, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn ambersand_predicate() { // main { &'a' ['a'..'b']+ }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(5),
+            Instruction::Choice(3),
+            Instruction::Char('a' as u8),
+            Instruction::FailTwice,
+            Instruction::FailTwice,
+            Instruction::CharRange('a' as u8, 'b' as u8),
+            Instruction::Choice(3),
+            Instruction::CharRange('a' as u8, 'b' as u8),
+            Instruction::PartialCommit(-1),
+            Instruction::Return
+        ];
+        let subjects = vec!["a", "aa", "ab", "abbaabaa", "b", "ba"];
+        let expected = vec![true, true, true, true, false, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn optional_predicate() { // main { 'a'? 'b' }
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(3),
+            Instruction::Char('a' as u8),
+            Instruction::Commit(1),
+            Instruction::Char('b' as u8),
+            Instruction::Return
+        ];
+        let subjects = vec!["ab", "b", "c", "aa"];
+        let expected = vec![true, true, false, false];
+        execute_test(program, &subjects, &expected);
+    }
 }
