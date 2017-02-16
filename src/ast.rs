@@ -28,7 +28,7 @@ pub enum Pattern {
 }
 
 impl Grammar {
-    pub fn compile(&mut self) -> Vec<machine::Instruction> {
+    pub fn compile(&self) -> Vec<machine::Instruction> {
         let mut rules = Vec::new();
         let mut lookup = vec![];
 
@@ -44,11 +44,11 @@ impl Grammar {
         let mut k = 2;
         for mut rule in rules {
             lookup.push(k);
+            k += 3 + rule.len();
             result.push(machine::Instruction::PushPos);
             result.append(&mut rule);
             result.push(machine::Instruction::SavePos);
             result.push(machine::Instruction::Return);
-            k += 3 + rule.len();
         }
 
         for i in 0..result.len() {
@@ -167,7 +167,7 @@ impl Grammar {
         let mut inner = Grammar::compile_pattern(data);
         let mut instr_count = inner.len() as isize;
         if success {
-            result.push(machine::Instruction::Choice(instr_count + 5));
+            result.push(machine::Instruction::Choice(instr_count + 4));
             result.push(machine::Instruction::Choice(instr_count + 2));
             result.append(&mut inner);
             result.push(machine::Instruction::FailTwice);
@@ -179,4 +179,90 @@ impl Grammar {
         }
         result
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn execute_test(grammar : &Grammar, subjects : &Vec<&str>, expected : &Vec<bool>) {
+        let program = grammar.compile();
+        let mut machine = machine::Machine::new(program);
+        assert!(subjects.len() == expected.len());
+        for i in 0..expected.len() {
+            let result = machine.execute(subjects[i].to_string().into_bytes());
+            let fail = result.is_err();
+            println!("{:?}", machine.program);
+            println!("{}", subjects[i]);
+            assert!(!fail == expected[i]);
+        }
+    }
+
+    #[test]
+    fn simple_char_grammar_rules() {
+        /*
+            main { .;char_class;char_seq }
+            char_class { ['a'..'z''A'..'A'] }
+            char_seq { 'a';'b';'c' }
+        */
+        let char_class = Pattern::CharClass(vec![
+            ('a' as u8, Some('z' as u8)),
+            ('A' as u8, Some('A' as u8))
+        ]);
+        let char_seq = Pattern::CharSequence(vec![
+            'a' as u8,
+            'b' as u8,
+            'c' as u8
+        ]);
+        let main = Pattern::Sequence(vec![
+            Box::new(Pattern::Variable(1)),
+            Box::new(Pattern::Variable(2)),
+            Box::new(Pattern::Variable(3)),
+        ]);
+
+        let grammar = Grammar {
+            rules: vec![
+                main,
+                Pattern::CharAny,
+                char_class,
+                char_seq
+            ],
+            main: 0
+        };
+        let subjects = vec!["azabc", "Bkabc", "AAabc", "aqd", "xyz"];
+        let expected = vec![true, true, true, false, false];
+        execute_test(&grammar, &subjects, &expected);
+    }
+
+    #[test]
+    fn simple_lookahead_grammar() {
+        /*
+            main { !a;. / &a;. }
+        */
+        let ambersand = Pattern::Lookahead(true,
+            Box::new(Pattern::CharSequence(vec!['a' as u8])));
+        let not = Pattern::Lookahead(false,
+            Box::new(Pattern::CharSequence(vec!['a' as u8])));
+        let main = Pattern::Choice(
+            Box::new(Pattern::Sequence(vec![
+                Box::new(not),
+                Box::new(Pattern::CharAny)
+            ])),
+            Box::new(Pattern::Sequence(vec![
+                Box::new(ambersand),
+                Box::new(Pattern::CharAny)
+            ])),
+        );
+
+        let grammar = Grammar {
+            rules: vec![
+                main
+            ],
+            main: 0
+        };
+        let subjects = vec!["b", "a", "z", "aa", ""];
+        let expected = vec![true, true, true, false, false];
+        execute_test(&grammar, &subjects, &expected);
+    }
+
 }
