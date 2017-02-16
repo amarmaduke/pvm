@@ -132,9 +132,10 @@ impl Grammar {
 
     fn compile_one_or_more(data : &Box<Pattern>) -> Vec<machine::Instruction> {
         let mut inner = Grammar::compile_pattern(data);
+        let mut inner_clone = inner.clone();
         let instr_count = inner.len() as isize;
         let mut result = vec![];
-        result.append(&mut inner);
+        result.append(&mut inner_clone);
         result.push(machine::Instruction::Choice(instr_count + 2));
         result.append(&mut inner);
         result.push(machine::Instruction::PartialCommit(-instr_count));
