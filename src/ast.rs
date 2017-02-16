@@ -1,10 +1,3 @@
-
-
-/*
-
-*/
-
-
 use machine;
 
 #[derive(Debug)]
@@ -235,10 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_lookahead_grammar() {
-        /*
-            main { !a;. / &a;. }
-        */
+    fn simple_lookahead_grammar() { // main { !a;. / &a;. }
         let ambersand = Pattern::Lookahead(true,
             Box::new(Pattern::CharSequence(vec!['a' as u8])));
         let not = Pattern::Lookahead(false,
@@ -265,4 +255,50 @@ mod tests {
         execute_test(&grammar, &subjects, &expected);
     }
 
+    #[test]
+    fn simple_iteration_grammar() { // main { a+ / b* }
+        let main = Pattern::Choice(
+            Box::new(Pattern::OneOrMore(
+                Box::new(Pattern::CharSequence(vec!['a' as u8]))
+            )),
+            Box::new(Pattern::ZeroOrMore(
+                Box::new(Pattern::CharSequence(vec!['b' as u8]))
+            ))
+        );
+
+        let grammar = Grammar {
+            rules: vec![
+                main
+            ],
+            main: 0
+        };
+        let subjects = vec!["a", "aaaa", "", "b", "bbbbb", "c"];
+        let expected = vec![true, true, true, true, true, false];
+        execute_test(&grammar, &subjects, &expected);
+    }
+
+    #[test]
+    fn simple_optional_subparser() {
+        /*
+            main { a? 'b' }
+            a { a+ }
+        */
+        let a = Pattern::OneOrMore(
+            Box::new(Pattern::CharSequence(vec!['a' as u8])));
+        let main = Pattern::Sequence(vec![
+            Box::new(Pattern::Optional(Box::new(Pattern::Variable(1)))),
+            Box::new(Pattern::CharSequence(vec!['b' as u8]))
+        ]);
+
+        let grammar = Grammar {
+            rules: vec![
+                main,
+                a
+            ],
+            main: 0
+        };
+        let subjects = vec!["b", "ab", "aaaaab", "", "bb"];
+        let expected = vec![true, true, true, false, false];
+        execute_test(&grammar, &subjects, &expected);
+    }
 }
