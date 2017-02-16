@@ -30,7 +30,7 @@ pub enum Instruction {
 }
 
 pub struct Machine {
-    program: Vec<Instruction>,
+    pub program: Vec<Instruction>,
     pub skip : Vec<(u8, u8)>,
     pub skip_on : bool
 }
@@ -92,7 +92,7 @@ impl Machine {
                         }
                     },
                     Instruction::Any => {
-                        if i + 1 < input.len() {
+                        if i < input.len() {
                             pc += 1;
                             i += 1;
                         } else {
