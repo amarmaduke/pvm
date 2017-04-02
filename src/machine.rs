@@ -21,7 +21,7 @@ pub enum Instruction {
     Commit(isize),
     BackCommit(isize),
     PartialCommit(isize),
-    PushPos,
+    PushPos(usize),
     SavePos,
     Fail,
     FailTwice,
@@ -46,7 +46,7 @@ impl Machine {
         result
     }
 
-    pub fn execute(&mut self, input : Vec<u8>) -> Result<Vec<(usize, usize)>, u8> {
+    pub fn execute(&mut self, input : Vec<u8>) -> Result<Vec<(usize, usize, usize)>, u8> {
         let mut stack = Vec::new();
         let mut pos_stack = Vec::new();
         let mut result = Vec::new();
@@ -165,13 +165,13 @@ impl Machine {
                             }
                         }
                     },
-                    Instruction::PushPos => {
-                        pos_stack.push(i);
+                    Instruction::PushPos(id) => {
+                        pos_stack.push((id, i));
                         pc += 1;
                     },
                     Instruction::SavePos => {
-                        if let Some(j) = pos_stack.pop() {
-                            result.push((j, i));
+                        if let Some((id, j)) = pos_stack.pop() {
+                            result.push((id, j, i));
                         }
                         pc += 1;
                     },

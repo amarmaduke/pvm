@@ -35,13 +35,15 @@ impl Grammar {
         ];
 
         let mut k = 2;
+        let mut id = 0;
         for mut rule in rules {
             lookup.push(k);
             k += 3 + rule.len();
-            result.push(machine::Instruction::PushPos);
+            result.push(machine::Instruction::PushPos(id));
             result.append(&mut rule);
             result.push(machine::Instruction::SavePos);
             result.push(machine::Instruction::Return);
+            id += 1;
         }
 
         for i in 0..result.len() {
