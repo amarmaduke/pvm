@@ -2,8 +2,8 @@ use machine;
 
 #[derive(Debug)]
 pub struct Grammar {
-    rules : Vec<Pattern>,
-    main : u32
+    pub rules : Vec<Pattern>,
+    pub main : u32
 }
 
 #[derive(Debug)]
