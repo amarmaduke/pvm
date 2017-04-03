@@ -2,6 +2,7 @@
 mod ast;
 pub mod machine;
 mod syntax;
+mod parser;
 
 pub fn parse(text: &str) {
     let program = vec![machine::Instruction::Char(0)];
