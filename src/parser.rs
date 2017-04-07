@@ -1,3 +1,4 @@
+use std::iter::{Peekable};
 use ast;
 
 /* Grammar
@@ -69,14 +70,14 @@ fn tokenize(grammar : &String) -> Vec<Token> {
 }
 
 fn parse(grammar : &String, tokens : Vec<Token>) -> Result<ast::Grammar, u8> {
-    let mut iterator = tokens.iter();
+    let mut iterator = tokens.iter().peekable();
     let mut grammar_object = ast::Grammar { rules: vec![], main: 0 };
 
     while let Some(token) = iterator.next() {
         if let &Token::Name(name_start, name_end) = token {
             if let Some(brace_token) = iterator.next() {
                 if brace_token == &Token::OpenBrace {
-                    let pattern = parse_pattern(grammar, &mut iterator);
+                    let pattern = parse_pattern(grammar, &mut iterator, false);
                     match pattern {
                         Ok(p) => grammar_object.rules.push(p),
                         Err(x) => return Err(x)
@@ -94,21 +95,108 @@ fn parse(grammar : &String, tokens : Vec<Token>) -> Result<ast::Grammar, u8> {
     Ok(grammar_object)
 }
 
-fn parse_pattern<Iter>(grammar : &String, iterator : &mut Iter) -> Result<ast::Pattern, u8>
-    where Iter : Iterator
+fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is_subpattern : bool) -> Result<ast::Pattern, u8>
+    where Iter : Iterator<Item=&'a Token>
 {
-    let mut result = None;
+    let mut sequence = vec![];
 
     while let Some(token) = iterator.next() {
-        //match token {
-        //    &Token::OpenParen => 
-       // }
+        let mut initial_pattern = Err(0);
+        match token {
+            &Token::OpenParen => { initial_pattern = initial_pattern.or(parse_pattern(grammar, iterator, true)); },
+            &Token::OpenBracket => { initial_pattern = initial_pattern.or(parse_char_class(grammar, iterator)); },
+            &Token::DoubleQuote | &Token::SingleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(grammar, iterator)); },
+            &Token::Dot => { initial_pattern = initial_pattern.or(Ok(ast::Pattern::CharAny)); },
+            &Token::Name(le, ri) => { initial_pattern = initial_pattern.or(parse_variable(grammar, le, ri)); },
+            &Token::Ambersand => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, true)); },
+            &Token::Exclamation => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, false)); },
+            _ => { }
+        }
+
+        if let Some(&suffix_token) = iterator.peek() {
+            match suffix_token {
+                &Token::Plus | &Token::Asterik | &Token::Question => {
+                    initial_pattern = parse_suffix(grammar, iterator, initial_pattern);
+                }
+                _ => { }
+            }
+        }
+
+        match initial_pattern {
+            Ok(p) => sequence.push(p),
+            Err(x) => return Err(x)
+        }
+
+        if let Some(&test_token) = iterator.peek() {
+            match test_token {
+                &Token::CloseParen => if is_subpattern { 
+                    iterator.next(); 
+                } else { 
+                    return Err(0);
+                },
+                &Token::CloseBrace => if !is_subpattern {
+                    iterator.next();
+                    break;
+                } else {
+                    return Err(0);
+                },
+                &Token::Slash => {
+                    let sub_pattern = parse_choice(grammar, iterator, &mut sequence);
+                    match sub_pattern {
+                        Ok(p) => sequence.push(p),
+                        Err(x) => return Err(x)
+                    }
+                },
+                _ => { }
+            }
+        }
     }
 
-    match result {
-        Some(pattern) => Ok(pattern),
-        None => Err(0)
+    let mut boxed_vec = vec![];
+    while let Some(item) = sequence.pop() {
+        boxed_vec.push(Box::new(item));
     }
+
+    Ok(ast::Pattern::Sequence(boxed_vec))
+}
+
+fn parse_choice<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, patterns : &mut Vec<ast::Pattern>) -> Result<ast::Pattern, u8>
+    where Iter : Iterator<Item=&'a Token>
+{
+    Err(0)
+}
+
+fn parse_suffix<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, pattern : Result<ast::Pattern, u8>) -> Result<ast::Pattern, u8>
+    where Iter : Iterator<Item=&'a Token>
+{
+    Err(0)
+}
+
+fn parse_lookahead<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, lookahead : bool) -> Result<ast::Pattern, u8>
+    where Iter : Iterator<Item=&'a Token>
+{
+    let sub_pattern = parse_pattern(grammar, iterator, false);
+    match sub_pattern {
+        Ok(p) => Ok(ast::Pattern::Lookahead(lookahead, Box::new(p))),
+        Err(x) => Err(x)
+    }
+}
+
+fn parse_char_class<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>) -> Result<ast::Pattern, u8>
+    where Iter : Iterator<Item=&'a Token>
+{
+    Err(0)
+}
+
+fn parse_char_sequence<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>) -> Result<ast::Pattern, u8>
+    where Iter : Iterator<Item=&'a Token>
+{
+    Err(0)
+}
+
+fn parse_variable(grammar : &String, left : usize, right : usize) -> Result<ast::Pattern, u8>
+{
+    Err(0)
 }
 
 
