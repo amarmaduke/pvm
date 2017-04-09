@@ -25,7 +25,8 @@ enum Token {
     Exclamation,
     Ambersand,
     Slash,
-    Name(usize, usize)
+    Name(usize, usize),
+    Letter(u8)
 }
 
 fn tokenize(grammar : &String) -> Vec<Token> {
@@ -33,36 +34,64 @@ fn tokenize(grammar : &String) -> Vec<Token> {
     let mut tokens = vec![];
     let mut name = (-1, -1);
     let mut i = 0;
+    let mut in_quote = false;
+    let mut escaped = false;
 
     while let Some(item) = iterator.next() {
-        match item {
-            '{' => tokens.push(Token::OpenBrace),
-            '}' => tokens.push(Token::CloseBrace),
-            '(' => tokens.push(Token::OpenParen),
-            ')' => tokens.push(Token::CloseParen),
-            '[' => tokens.push(Token::OpenBracket),
-            ']' => tokens.push(Token::CloseBracket),
-            '\'' => tokens.push(Token::SingleQuote),
-            '\"' => tokens.push(Token::DoubleQuote),
-            '.' => tokens.push(Token::Dot),
-            '+' => tokens.push(Token::Plus),
-            '*' => tokens.push(Token::Asterik),
-            '?' => tokens.push(Token::Question),
-            '!' => tokens.push(Token::Exclamation),
-            '&' => tokens.push(Token::Ambersand),
-            '/' => tokens.push(Token::Slash),
-            _ if item.is_alphanumeric() => {
-                if name == (-1, -1) {
-                    name = (i, i);
-                } else {
-                    name.1 += 1;
+        if in_quote {
+            if escaped {
+                tokens.push(Token::Letter(item as u8));
+                escaped = false;
+            } else {
+                match item {
+                    '\'' => {
+                        tokens.push(Token::SingleQuote); 
+                        in_quote = false;
+                    },
+                    '\"' => {
+                        tokens.push(Token::DoubleQuote); 
+                        in_quote = false;
+                    },
+                    '\\' => { escaped = true; },
+                    _ => tokens.push(Token::Letter(item as u8))
                 }
-            },
-            _ if item.is_whitespace() && name != (-1, -1) => {
-                tokens.push(Token::Name(name.0 as usize, name.1 as usize));
-                name = (-1, -1);
             }
-            _ => { }
+        } else {
+            match item {
+                '{' => tokens.push(Token::OpenBrace),
+                '}' => tokens.push(Token::CloseBrace),
+                '(' => tokens.push(Token::OpenParen),
+                ')' => tokens.push(Token::CloseParen),
+                '[' => tokens.push(Token::OpenBracket),
+                ']' => tokens.push(Token::CloseBracket),
+                '.' => tokens.push(Token::Dot),
+                '+' => tokens.push(Token::Plus),
+                '*' => tokens.push(Token::Asterik),
+                '?' => tokens.push(Token::Question),
+                '!' => tokens.push(Token::Exclamation),
+                '&' => tokens.push(Token::Ambersand),
+                '/' => tokens.push(Token::Slash),
+                '\'' => {
+                    tokens.push(Token::SingleQuote);
+                    in_quote = true;
+                },
+                '\"' => {
+                    tokens.push(Token::DoubleQuote);
+                    in_quote = true;
+                },
+                _ if item.is_alphanumeric() => {
+                    if name == (-1, -1) {
+                        name = (i, i);
+                    } else {
+                        name.1 += 1;
+                    }
+                },
+                _ if item.is_whitespace() && name != (-1, -1) => {
+                    tokens.push(Token::Name(name.0 as usize, name.1 as usize));
+                    name = (-1, -1);
+                }
+                _ => { }
+            }
         }
         i += 1;
     }
@@ -105,7 +134,8 @@ fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is
         match token {
             &Token::OpenParen => { initial_pattern = initial_pattern.or(parse_pattern(grammar, iterator, true)); },
             &Token::OpenBracket => { initial_pattern = initial_pattern.or(parse_char_class(grammar, iterator)); },
-            &Token::DoubleQuote | &Token::SingleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(grammar, iterator)); },
+            &Token::DoubleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(grammar, iterator, false)); },
+            &Token::SingleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(grammar, iterator, true)); },
             &Token::Dot => { initial_pattern = initial_pattern.or(Ok(ast::Pattern::CharAny)); },
             &Token::Name(le, ri) => { initial_pattern = initial_pattern.or(parse_variable(grammar, le, ri)); },
             &Token::Ambersand => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, true)); },
@@ -213,9 +243,10 @@ fn parse_char_class<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>)
     Err(0)
 }
 
-fn parse_char_sequence<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>) -> Result<ast::Pattern, u8>
+fn parse_char_sequence<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, single_quote : bool) -> Result<ast::Pattern, u8>
     where Iter : Iterator<Item=&'a Token>
 {
+
     Err(0)
 }
 
