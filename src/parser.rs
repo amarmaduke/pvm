@@ -113,12 +113,14 @@ fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is
             _ => { }
         }
 
-        if let Some(&suffix_token) = iterator.peek() {
-            match suffix_token {
-                &Token::Plus | &Token::Asterik | &Token::Question => {
-                    initial_pattern = parse_suffix(grammar, iterator, initial_pattern);
+        if initial_pattern.is_ok() {
+            if let Some(&suffix_token) = iterator.peek() {
+                match suffix_token {
+                    &Token::Plus | &Token::Asterik | &Token::Question => {
+                        initial_pattern = parse_suffix(grammar, iterator, initial_pattern.ok().unwrap());
+                    }
+                    _ => { }
                 }
-                _ => { }
             }
         }
 
@@ -141,7 +143,7 @@ fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is
                     return Err(0);
                 },
                 &Token::Slash => {
-                    let sub_pattern = parse_choice(grammar, iterator, &mut sequence);
+                    let sub_pattern = parse_choice(grammar, iterator, &mut sequence, is_subpattern);
                     match sub_pattern {
                         Ok(p) => sequence.push(p),
                         Err(x) => return Err(x)
@@ -160,16 +162,39 @@ fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is
     Ok(ast::Pattern::Sequence(boxed_vec))
 }
 
-fn parse_choice<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, patterns : &mut Vec<ast::Pattern>) -> Result<ast::Pattern, u8>
+fn parse_choice<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, patterns : &mut Vec<ast::Pattern>, is_subpattern : bool) -> Result<ast::Pattern, u8>
     where Iter : Iterator<Item=&'a Token>
 {
-    Err(0)
+    let mut boxed_vec = vec![];
+    while let Some(item) = patterns.pop() {
+        boxed_vec.push(Box::new(item));
+    }
+
+    iterator.next();
+
+    let right = parse_pattern(grammar, iterator, is_subpattern);
+
+    match right {
+        Ok(p) => Ok(ast::Pattern::Choice(
+            Box::new(ast::Pattern::Sequence(boxed_vec)),
+            Box::new(p))),
+        Err(x) => Err(x)
+    }
 }
 
-fn parse_suffix<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, pattern : Result<ast::Pattern, u8>) -> Result<ast::Pattern, u8>
+fn parse_suffix<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, pattern : ast::Pattern) -> Result<ast::Pattern, u8>
     where Iter : Iterator<Item=&'a Token>
 {
-    Err(0)
+    if let Some(token) = iterator.next() {
+        match token {
+            &Token::Asterik => Ok(ast::Pattern::ZeroOrMore(Box::new(pattern))),
+            &Token::Plus => Ok(ast::Pattern::OneOrMore(Box::new(pattern))),
+            &Token::Question => Ok(ast::Pattern::Optional(Box::new(pattern))),
+            _ => Err(0)
+        }
+    } else {
+        Err(0)
+    }
 }
 
 fn parse_lookahead<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, lookahead : bool) -> Result<ast::Pattern, u8>
