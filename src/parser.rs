@@ -24,7 +24,7 @@ enum Token {
     Letter(u8)
 }
 
-fn tokenize(grammar : &String) -> (Vec<Token>, HashMap<String, i32>) {
+fn tokenize(grammar : &String) -> (Vec<Token>, i32) {
     let mut iterator = grammar.chars();
     let mut tokens = vec![];
     let mut name = vec![];
@@ -87,10 +87,10 @@ fn tokenize(grammar : &String) -> (Vec<Token>, HashMap<String, i32>) {
             }
         }
     }
-    (tokens, map)
+    (tokens, i)
 }
 
-fn parse(grammar : &String, tokens : Vec<Token>, rule_map : HashMap<String, i32>) -> Result<ast::Grammar, u8> {
+fn parse(grammar : &String, tokens : Vec<Token>, rule_count : i32) -> Result<ast::Grammar, u8> {
     let mut iterator = tokens.iter().peekable();
     let mut grammar_object = ast::Grammar { rules: vec![], main: 0 };
     let mut insert_order = vec![];
@@ -116,9 +116,13 @@ fn parse(grammar : &String, tokens : Vec<Token>, rule_map : HashMap<String, i32>
     }
 
     insert_order.sort_by(|a, b| a.0.cmp(&b.0));
-    grammar_object.rules = insert_order.drain(..).map(|x| x.1).collect();
 
-    Ok(grammar_object)
+    if insert_order.iter().map(|x| x.0).eq(0..rule_count) {
+        grammar_object.rules = insert_order.drain(..).map(|x| x.1).collect();
+        Ok(grammar_object)
+    } else {
+        Err(0)
+    }
 }
 
 fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is_subpattern : bool) -> Result<ast::Pattern, u8>
