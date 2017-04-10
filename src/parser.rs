@@ -1,12 +1,7 @@
+use std::collections::{HashMap};
 use std::iter::{Peekable};
+use std::str;
 use ast;
-
-/* Grammar
-    main {  }
-
-
-
-*/
 
 #[derive(Debug, Eq, PartialEq)]
 enum Token {
@@ -25,17 +20,19 @@ enum Token {
     Exclamation,
     Ambersand,
     Slash,
-    Name(usize, usize),
+    Name(i32),
     Letter(u8)
 }
 
-fn tokenize(grammar : &String) -> Vec<Token> {
+fn tokenize(grammar : &String) -> (Vec<Token>, HashMap<String, i32>) {
     let mut iterator = grammar.chars();
     let mut tokens = vec![];
-    let mut name = (-1, -1);
-    let mut i = 0;
+    let mut name = vec![];
+    let mut i = 1;
     let mut in_quote = false;
     let mut escaped = false;
+    let mut map = HashMap::new();
+    map.insert("main".to_string(), 0);
 
     while let Some(item) = iterator.next() {
         if in_quote {
@@ -79,36 +76,32 @@ fn tokenize(grammar : &String) -> Vec<Token> {
                     tokens.push(Token::DoubleQuote);
                     in_quote = true;
                 },
-                _ if item.is_alphanumeric() => {
-                    if name == (-1, -1) {
-                        name = (i, i);
-                    } else {
-                        name.1 += 1;
-                    }
-                },
-                _ if item.is_whitespace() && name != (-1, -1) => {
-                    tokens.push(Token::Name(name.0 as usize, name.1 as usize));
-                    name = (-1, -1);
+                _ if item.is_alphanumeric() => name.push(item as u8),
+                _ if item.is_whitespace() && name.len() != 0 => {
+                    let id = map.entry(String::from_utf8(name.clone()).unwrap()).or_insert(i);
+                    tokens.push(Token::Name(*id));
+                    name.clear();
+                    i += 1;
                 }
                 _ => { }
             }
         }
-        i += 1;
     }
-    tokens
+    (tokens, map)
 }
 
-fn parse(grammar : &String, tokens : Vec<Token>) -> Result<ast::Grammar, u8> {
+fn parse(grammar : &String, tokens : Vec<Token>, rule_map : HashMap<String, i32>) -> Result<ast::Grammar, u8> {
     let mut iterator = tokens.iter().peekable();
     let mut grammar_object = ast::Grammar { rules: vec![], main: 0 };
+    let mut insert_order = vec![];
 
     while let Some(token) = iterator.next() {
-        if let &Token::Name(name_start, name_end) = token {
+        if let &Token::Name(id) = token {
             if let Some(brace_token) = iterator.next() {
                 if brace_token == &Token::OpenBrace {
                     let pattern = parse_pattern(grammar, &mut iterator, false);
                     match pattern {
-                        Ok(p) => grammar_object.rules.push(p),
+                        Ok(p) => insert_order.push((id, p)),
                         Err(x) => return Err(x)
                     }
                 } else {
@@ -116,11 +109,15 @@ fn parse(grammar : &String, tokens : Vec<Token>) -> Result<ast::Grammar, u8> {
                 }
             } else {
                 return Err(0);
-            }
+            } 
         } else {
             return Err(0);
         }
     }
+
+    insert_order.sort_by(|a, b| a.0.cmp(&b.0));
+    grammar_object.rules = insert_order.drain(..).map(|x| x.1).collect();
+
     Ok(grammar_object)
 }
 
@@ -137,7 +134,7 @@ fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is
             &Token::DoubleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(grammar, iterator, false)); },
             &Token::SingleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(grammar, iterator, true)); },
             &Token::Dot => { initial_pattern = initial_pattern.or(Ok(ast::Pattern::CharAny)); },
-            &Token::Name(le, ri) => { initial_pattern = initial_pattern.or(parse_variable(grammar, le, ri)); },
+            &Token::Name(id) => { initial_pattern = initial_pattern.or(parse_variable(grammar, id)); },
             &Token::Ambersand => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, true)); },
             &Token::Exclamation => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, false)); },
             _ => { }
@@ -240,19 +237,79 @@ fn parse_lookahead<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, 
 fn parse_char_class<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>) -> Result<ast::Pattern, u8>
     where Iter : Iterator<Item=&'a Token>
 {
-    Err(0)
+    let mut tuples = vec![];
+
+    while let Some(&token) = iterator.peek() {
+        if token == &Token::CloseBracket { 
+            iterator.next();
+            break;
+        }
+        let letter = parse_char_class_element(grammar, iterator);
+
+        if let Some(&dot_token) = iterator.peek() {
+            if dot_token == &Token::Dot {
+                let range_letter = parse_char_class_element(grammar, iterator);
+                if letter.is_ok() && range_letter.is_ok() {
+                    tuples.push((letter.ok().unwrap(), Some(range_letter.ok().unwrap())));
+                } else {
+                    return Err(0);
+                }
+            }
+        }
+
+        match letter {
+            Ok(x) => tuples.push((x, None)),
+            Err(x) => return Err(x)
+        };
+    }
+
+    Ok(ast::Pattern::CharClass(tuples))
 }
 
-fn parse_char_sequence<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, single_quote : bool) -> Result<ast::Pattern, u8>
+fn parse_char_class_element<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>) -> Result<u8, u8>
     where Iter : Iterator<Item=&'a Token>
 {
+    let first_quote = iterator.next();
+    let utf8_byte = iterator.next();
+    let second_quote = iterator.next();
 
-    Err(0)
+    if first_quote.is_some() && utf8_byte.is_some() && second_quote.is_some() {
+        let single_quote_check = *first_quote.unwrap() == Token::SingleQuote
+            && first_quote.unwrap() == second_quote.unwrap();
+        let double_quote_check = *first_quote.unwrap() == Token::DoubleQuote
+            && first_quote.unwrap() == second_quote.unwrap();
+
+        if single_quote_check || double_quote_check {
+            match utf8_byte.unwrap() {
+                &Token::Letter(x) => Ok(x),
+                _ => Err(0)
+            }
+        } else {
+            Err(0)
+        }
+    } else {
+        Err(0)
+    }
 }
 
-fn parse_variable(grammar : &String, left : usize, right : usize) -> Result<ast::Pattern, u8>
+fn parse_char_sequence<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is_single_quote : bool) -> Result<ast::Pattern, u8>
+    where Iter : Iterator<Item=&'a Token>
 {
-    Err(0)
+    let mut characters = vec![];
+    while let Some(item) = iterator.next() {
+        match item {
+            &Token::Letter(x) => { characters.push(x); },
+            &Token::SingleQuote if is_single_quote => { break; },
+            &Token::DoubleQuote if !is_single_quote => { break; },
+            _ => { return Err(0); }
+        }
+    }
+    Ok(ast::Pattern::CharSequence(characters))
+}
+
+fn parse_variable(grammar : &String, id : i32) -> Result<ast::Pattern, u8>
+{
+    Ok(ast::Pattern::Variable(id))
 }
 
 
