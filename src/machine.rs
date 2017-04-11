@@ -147,7 +147,7 @@ impl Machine {
                     },
                     Instruction::BackCommit(j) => {
                         if let Some(frame) = stack.pop() {
-                            if let StackFrame::Backtrack(p, k) = frame {
+                            if let StackFrame::Backtrack(_, k) = frame {
                                 pc += j;
                                 i = k;
                             }
@@ -158,7 +158,7 @@ impl Machine {
                             pc += j;
                             let pos = stack.len() - 1;
                             match stack[pos] {
-                                StackFrame::Backtrack(p, k) => { 
+                                StackFrame::Backtrack(p, _) => { 
                                     stack[pos] = StackFrame::Backtrack(p, i);
                                 },
                                 _ => { }
@@ -404,11 +404,11 @@ mod tests {
         let program = vec![
             Instruction::Call(6),         // -- entry point (main)
             Instruction::Jump(13),        // -' (exit point)
-            Instruction::PushPos,         // -- b
+            Instruction::PushPos(1),      // -- b
             Instruction::Char('b' as u8), //  |
             Instruction::SavePos,         //  |
             Instruction::Return,          // -'
-            Instruction::PushPos,         // -- main
+            Instruction::PushPos(0),      // -- main
             Instruction::Char('a' as u8), //  |
             Instruction::Call(-6),        //  | (b)
             Instruction::Choice(3),       //  |
