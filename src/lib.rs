@@ -14,16 +14,3 @@ pub fn build(text: &str) -> Result<machine::Machine, u8> {
     let program = grammar_object.compile();
     Ok(machine::Machine::new(program))
 }
-
-
-
-
-
-
-
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {}
-}

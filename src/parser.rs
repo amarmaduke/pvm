@@ -109,7 +109,7 @@ pub fn parse(grammar : &String, tokens : Vec<Token>, rule_count : i32) -> Result
         if let &Token::Name(id) = token {
             if let Some(brace_token) = iterator.next() {
                 if brace_token == &Token::OpenBrace {
-                    let pattern = parse_pattern(grammar, &mut iterator, false);
+                    let pattern = parse_pattern(grammar, &mut iterator, false, true, false);
                     match pattern {
                         Ok(p) => insert_order.push((id, p)),
                         Err(x) => return Err(x)
@@ -135,22 +135,24 @@ pub fn parse(grammar : &String, tokens : Vec<Token>, rule_count : i32) -> Result
     }
 }
 
-fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is_subpattern : bool) -> Result<ast::Pattern, u8>
+fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is_subpattern : bool, greedy : bool, consume_paren : bool) -> Result<ast::Pattern, u8>
     where Iter : Iterator<Item=&'a Token>
 {
     let mut sequence = vec![];
 
     while let Some(token) = iterator.next() {
+        println!("{:?} {:?}", token, sequence);
         let mut initial_pattern = Err(0);
         match token {
-            &Token::OpenParen => { initial_pattern = initial_pattern.or(parse_pattern(grammar, iterator, true)); },
+            &Token::OpenParen => { initial_pattern = initial_pattern.or(parse_pattern(grammar, iterator, true, true, true)); },
             &Token::OpenBracket => { initial_pattern = initial_pattern.or(parse_char_class(iterator)); },
             &Token::DoubleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(iterator, false)); },
             &Token::SingleQuote => { initial_pattern = initial_pattern.or(parse_char_sequence(iterator, true)); },
             &Token::Dot => { initial_pattern = initial_pattern.or(Ok(ast::Pattern::CharAny)); },
             &Token::Name(id) => { initial_pattern = initial_pattern.or(parse_variable(id)); },
-            &Token::Ambersand => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, true)); },
-            &Token::Exclamation => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, false)); },
+            &Token::Ambersand => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, true, is_subpattern)); },
+            &Token::Exclamation => { initial_pattern = initial_pattern.or(parse_lookahead(grammar, iterator, false, is_subpattern)); },
+            &Token::CloseParen => { break; }
             _ => { }
         }
 
@@ -173,7 +175,8 @@ fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is
         if let Some(&test_token) = iterator.peek() {
             match test_token {
                 &Token::CloseParen => if is_subpattern { 
-                    iterator.next(); 
+                    if consume_paren { iterator.next(); }
+                    break;
                 } else { 
                     return Err(0);
                 },
@@ -193,6 +196,8 @@ fn parse_pattern<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, is
                 _ => { }
             }
         }
+
+        if !greedy && sequence.len() > 0 { break; }
     }
 
     let boxed_vec = sequence.drain(..).map(|x| Box::new(x)).collect();
@@ -205,7 +210,7 @@ fn parse_choice<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, pat
     let boxed_vec = patterns.drain(..).map(|x| Box::new(x)).collect();
     iterator.next();
 
-    let right = parse_pattern(grammar, iterator, is_subpattern);
+    let right = parse_pattern(grammar, iterator, is_subpattern, true, false);
     match right {
         Ok(p) => Ok(ast::Pattern::Choice(
             Box::new(ast::Pattern::Sequence(boxed_vec)),
@@ -229,10 +234,10 @@ fn parse_suffix<'a, Iter>(iterator : &mut Peekable<Iter>, pattern : ast::Pattern
     }
 }
 
-fn parse_lookahead<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, lookahead : bool) -> Result<ast::Pattern, u8>
+fn parse_lookahead<'a, Iter>(grammar : &String, iterator : &mut Peekable<Iter>, lookahead : bool, is_subpattern : bool) -> Result<ast::Pattern, u8>
     where Iter : Iterator<Item=&'a Token>
 {
-    let sub_pattern = parse_pattern(grammar, iterator, false);
+    let sub_pattern = parse_pattern(grammar, iterator, is_subpattern, false, false);
     match sub_pattern {
         Ok(p) => Ok(ast::Pattern::Lookahead(lookahead, Box::new(p))),
         Err(x) => Err(x)
@@ -327,7 +332,6 @@ fn parse_variable(id : i32) -> Result<ast::Pattern, u8>
 mod tests {
     use super::*;
     use machine;
-    use ast::*;
 
     fn execute_test(grammar : &String, subjects : &Vec<&str>, expected : &Vec<bool>) {
         let token_result = tokenize(grammar);
@@ -409,8 +413,8 @@ mod tests {
 
     #[test]
     fn simple_prefix_grammar() {
-        let grammar = "main { 'a' &'b' 'c' !'d' }".to_string();
-        let subjects = vec!["abc", "abcx", "ac", "abcd"];
+        let grammar = "main { 'a' &'b' 'b' 'c' !'d' }".to_string();
+        let subjects = vec!["abc", "abc", "ac", "abcd"];
         let expected = vec![true, true, false, false];
         execute_test(&grammar, &subjects, &expected);
     }
@@ -424,7 +428,15 @@ mod tests {
     }
 
     #[test]
-    fn dogfood() { // wip
+    fn parenthetical_and_lookahead() {
+        let grammar = "main { &('b' / 'a') .* }".to_string();
+        let subjects = vec!["a", "b", "aa", "ab", "azzd", "c", "zab"];
+        let expected = vec![true, true, true, true, true, false, false];
+        execute_test(&grammar, &subjects, &expected);
+    }
+
+    #[test]
+    fn dogfood() {
         let grammar = "
             main { rule+ }
             rule { name '{' expression '}' }
@@ -442,7 +454,18 @@ mod tests {
             qletter { ''' letter ''' / '\\\"' letter '\\\"' }
             name { letter+ }
             letter { ['a'..'z''A'..'Z''0'..'9''_'] }
-        ";
+        ".to_string();
+        let subjects = vec![
+            "main { ('a' / 'b') / 'c' ('d'.)+ }",
+            "main { 'a' &'b' 'b' 'c' !'d' }",
+            "main { 'a' / 'b' / 'c' }",
+            "main { 'a'+ 'b'* 'c'? }",
+            "main { .char_class char_seq }
+                char_class { ['a'..'z''A'] }
+                char_seq { \"abc\" }"
+        ];
+        let expected = vec![true, true, true, true, true];
+        execute_test(&grammar, &subjects, &expected);
     }
 
 }
