@@ -160,7 +160,7 @@ impl Grammar {
     fn compile_lookahead(success : bool, data : &Box<Pattern>) -> Vec<machine::Instruction> {
         let mut result = vec![];
         let mut inner = Grammar::compile_pattern(data);
-        let mut instr_count = inner.len() as isize;
+        let instr_count = inner.len() as isize;
         if success {
             result.push(machine::Instruction::Choice(instr_count + 4));
             result.push(machine::Instruction::Choice(instr_count + 2));
