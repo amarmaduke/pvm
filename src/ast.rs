@@ -34,11 +34,11 @@ impl Grammar {
             machine::Instruction::Stop
         ];
 
-        let mut k = 2;
+        let mut k = 2isize;
         let mut id = 0;
         for mut rule in rules {
             lookup.push(k);
-            k += 3 + rule.len();
+            k += 3 + rule.len() as isize;
             result.push(machine::Instruction::PushPos(id));
             result.append(&mut rule);
             result.push(machine::Instruction::SavePos);
@@ -48,7 +48,7 @@ impl Grammar {
 
         for i in 0..result.len() {
             if let machine::Instruction::Call(r) = result[i] {
-                let dist = lookup[r as usize] - i;
+                let dist = lookup[r as usize] - i as isize;
                 result[i] = machine::Instruction::Call(dist as isize);
             }
         }
