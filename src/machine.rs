@@ -46,7 +46,7 @@ impl Machine {
         result
     }
 
-    pub fn execute(&mut self, input : Vec<u8>) -> Result<Vec<(usize, usize, usize)>, u8> {
+    pub fn execute(&mut self, input : Vec<u8>) -> Result<Vec<(usize, usize, usize)>, usize> {
         let mut stack = Vec::new();
         let mut pos_stack = Vec::new();
         let mut result = Vec::new();
@@ -197,7 +197,7 @@ impl Machine {
         if !fail {
             Ok(result)
         } else {
-            Err(0)
+            Err(i)
         }
     }
 
