@@ -4,6 +4,7 @@
 enum StackFrame {
     Return(isize),
     Backtrack(isize, usize),
+    PrecedenceBacktrack(isize, isize, usize, Option<usize>, isize)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -17,6 +18,7 @@ pub enum Instruction {
     Choice(isize),
     Jump(isize),
     Call(isize),
+    PrecedenceCall(isize, isize),
     Return,
     Commit(isize),
     BackCommit(isize),
@@ -55,6 +57,7 @@ impl Machine {
         let mut fail = false;
 
         loop {
+            println!("pc:{:?} i:{:?} fail:{:?} stack:{:?}", pc, i, fail, stack);
             if self.skip_on {
                 while i < input.len() && self.skip_parser(input[i]) {
                     i += 1;
@@ -63,12 +66,20 @@ impl Machine {
 
             if fail {
                 if let Some(frame) = stack.pop() {
-                    if let StackFrame::Backtrack(ret, j) = frame {
-                        pc = ret;
-                        i = j;
-                        fail = false;
-                    } else {
-                        pos_stack.pop();
+                    match frame {
+                        StackFrame::Backtrack(ret, j) => {
+                            pc = ret;
+                            i = j;
+                            fail = false;
+                        },
+                        StackFrame::PrecedenceBacktrack(ret, a, j, jp, k) => {
+                            pc = ret;
+                            i = jp.unwrap();
+                            fail = false;
+                        },
+                        StackFrame::Return(_) => {
+                            pos_stack.pop();
+                        }
                     }
                 } else {
                     break;
@@ -133,14 +144,61 @@ impl Machine {
                     Instruction::Call(j) => {
                         stack.push(StackFrame::Return(pc + 1));
                         pc += j;
-                    }
+                    },
+                    Instruction::PrecedenceCall(j, p) => {
+                        let pc_clone = pc;
+                        let stack_update = {
+                            let mut result = false;
+                            let memo = stack.iter().find(|&&x| match x {
+                                StackFrame::PrecedenceBacktrack(_, a, jp, _, _) => {
+                                    pc + j == a && i == jp
+                                },
+                                _ => false
+                            });
+                            match memo {
+                                Some(&StackFrame::PrecedenceBacktrack(ret, a, jp, jpp, k)) => {
+                                    match jpp {
+                                        Some(jr) => {
+                                            if p >= k {
+                                                pc += 1;
+                                                i = jr;
+                                            } else {
+                                                fail = true;
+                                            }
+                                        },
+                                        None => {
+                                            fail = true;
+                                        }
+                                    }
+                                },
+                                None => {
+                                    pc += j;
+                                    result = true;
+                                },
+                                _ => { }
+                            }
+                            result
+                        };
+                        if stack_update {
+                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone + 1, pc_clone + j, i, None, p));
+                        }
+                    },
                     Instruction::Return => {
                         if let Some(frame) = stack.pop() {
                             if let StackFrame::Return(ret) = frame {
                                 pc = ret;
+                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jp, k) = frame {
+                                if jp.is_some() && i >= jp.unwrap() {
+                                    pc = ret;
+                                    i = jp.unwrap();
+                                } else {
+                                    pc = a;
+                                    i = j;
+                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, Some(i + 1), k));
+                                }
                             }
                         }
-                    }
+                    },
                     Instruction::Commit(j) => {
                         stack.pop();
                         pc += j;
@@ -558,6 +616,24 @@ mod tests {
         ];
         let subjects = vec!["ab", "b", "c", "aa"];
         let expected = vec![true, true, false, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn direct_left_recursion() {
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(5),
+            Instruction::PrecedenceCall(-1, 0),
+            Instruction::Char(b'+'),
+            Instruction::Char(b'n'),
+            Instruction::Commit(2),
+            Instruction::Char(b'n'),
+            Instruction::Return
+        ];
+        let subjects = vec!["n", "n+n", "n+n+n", "n+n+n+n", "n+", "+n", "n+n+", "+n+n+"];
+        let expected = vec![true, true, true, true, false, false, false, false];
         execute_test(program, &subjects, &expected);
     }
 }
