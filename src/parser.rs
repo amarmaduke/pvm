@@ -19,6 +19,8 @@ pub enum Token {
     Ambersand,
     Slash,
     Dash,
+    Colon,
+    Number(i32),
     Name(i32),
     Letter(u8)
 }
@@ -72,19 +74,30 @@ pub fn tokenize(grammar : &String) -> (Vec<Token>, i32) {
             }
         } else {
             if !item.is_alphanumeric() && item != '_' && name.len() != 0 {
-                let mut to_insert = false;
-                let id = match map.get(&name) {
-                    Some(j) => *j,
-                    None => {
-                        let j = i;
-                        i += 1;
-                        to_insert = true;
-                        j
+                if name.iter().all(|&x| x >= b'0' && x <= b'9') {
+                    let mut i = 1;
+                    let mut result = 0;
+                    while let Some(x) = name.pop() {
+                        let n = (x - b'0') as i32;
+                        result += n*i;
+                        i *= 10;
                     }
-                };
-                if to_insert { map.insert(name.clone(), id); }
-                tokens.push(Token::Name(id));
-                name.clear();
+                    tokens.push(Token::Number(result));
+                } else {
+                    let mut to_insert = false;
+                    let id = match map.get(&name) {
+                        Some(j) => *j,
+                        None => {
+                            let j = i;
+                            i += 1;
+                            to_insert = true;
+                            j
+                        }
+                    };
+                    if to_insert { map.insert(name.clone(), id); }
+                    tokens.push(Token::Name(id));
+                    name.clear();
+                }
             }
 
             match item {  
@@ -100,6 +113,7 @@ pub fn tokenize(grammar : &String) -> (Vec<Token>, i32) {
                 '&' => tokens.push(Token::Ambersand),
                 '/' => tokens.push(Token::Slash),
                 '-' => tokens.push(Token::Dash),
+                ':' => tokens.push(Token::Colon),
                 '[' => {
                     tokens.push(Token::OpenBracket);
                     in_bracket = true;
@@ -279,7 +293,18 @@ fn parse_primary(i : &mut usize, tokens : &Vec<Token>) -> Result<ast::Pattern, u
             &Token::Name(id) => {
                 *i += 1;
                 if tokens.get(*i) != Some(&Token::OpenBrace) {
-                    Ok(ast::Pattern::Variable(id))
+                    if tokens.get(*i) == Some(&Token::Colon) {
+                        *i += 1;
+                        match tokens.get(*i) {
+                            Some(&Token::Number(num)) => {
+                                *i += 1;
+                                Ok(ast::Pattern::Variable(id, num))
+                            },
+                            _ => Err(*i)
+                        }
+                    } else {
+                        Ok(ast::Pattern::Variable(id, -1))
+                    }
                 } else {
                     *i = backtrack;
                     Err(*i)
@@ -506,6 +531,14 @@ mod tests {
     }
 
     #[test]
+    fn simple_left_recursion() {
+        let grammar = "main { (main:1 \"+n\" / 'n') ';' }".to_string();
+        let subjects = vec!["n;", "n+n;", "n+n+n+n+n+n;", "n", "n+;", "+n;", "n+n", ";"];
+        let expected = vec![true, true, true, false, false, false, false, false];
+        execute_test(&grammar, &subjects, &expected);
+    }
+
+    #[test]
     fn dogfood() {
         let grammar = "
             main { grammar }
@@ -515,9 +548,10 @@ mod tests {
             sequence { prefix+ }
             prefix { (and / not)? suffix }
             suffix { primary (question / star / plus)? }
-            primary { name !'{' / open expression close / literal / class / dot }
+            primary { name (colon num)? !'{' / open expression close / literal / class / dot }
 
-            name { [a-zA-Z0-9_]+ s }
+            name { [a-zA-Z][a-zA-Z0-9_]* s }
+            num { [1-9][0-9]* s }
 
             literal { 
                     '\\'' (!'\\'' char)* '\\'' s
@@ -539,6 +573,7 @@ mod tests {
             open { '(' s }
             close { ')' s }
             dot { '.' s }
+            colon { ':' s }
 
             s { ws* }
             ws { [ \\t\\r\\n] }

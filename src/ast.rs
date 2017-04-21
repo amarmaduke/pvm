@@ -11,7 +11,7 @@ pub enum Pattern {
     CharClass(Vec<(u8, Option<u8>)>),
     CharSequence(Vec<u8>),
     CharAny,
-    Variable(i32),
+    Variable(i32, i32),
     Choice(Box<Pattern>, Box<Pattern>),
     ZeroOrMore(Box<Pattern>),
     OneOrMore(Box<Pattern>),
@@ -51,6 +51,10 @@ impl Grammar {
                 let dist = lookup[r as usize] - i as isize;
                 result[i] = machine::Instruction::Call(dist as isize);
             }
+            if let machine::Instruction::PrecedenceCall(r, precedence) = result[i] {
+                let dist = lookup[r as usize] - i as isize;
+                result[i] = machine::Instruction::PrecedenceCall(dist as isize, precedence);
+            }
         }
         result
     }
@@ -60,7 +64,7 @@ impl Grammar {
             &Pattern::CharClass(ref data) => Grammar::compile_char_class(data),
             &Pattern::CharSequence(ref data) => Grammar::compile_char_sequence(data),
             &Pattern::CharAny => Grammar::compile_char_any(),
-            &Pattern::Variable(id) => Grammar::compile_variable(id),
+            &Pattern::Variable(id, precedence) => Grammar::compile_variable(id, precedence),
             &Pattern::Choice(ref le, ref ri) => Grammar::compile_choice(le, ri),
             &Pattern::ZeroOrMore(ref data) => Grammar::compile_zero_or_more(data),
             &Pattern::OneOrMore(ref data) => Grammar::compile_one_or_more(data),
@@ -100,8 +104,12 @@ impl Grammar {
         vec![machine::Instruction::Any]
     }
 
-    fn compile_variable(id : i32) -> Vec<machine::Instruction> {
-        vec![machine::Instruction::Call(id as isize)]
+    fn compile_variable(id : i32, precedence : i32) -> Vec<machine::Instruction> {
+        if precedence == -1 {
+            vec![machine::Instruction::Call(id as isize)]
+        } else {
+            vec![machine::Instruction::PrecedenceCall(id as isize, precedence as isize)]
+        }
     }
 
     fn compile_choice(left : &Box<Pattern>, right : &Box<Pattern>) -> Vec<machine::Instruction> {
@@ -210,9 +218,9 @@ mod tests {
             'c' as u8
         ]);
         let main = Pattern::Sequence(vec![
-            Box::new(Pattern::Variable(1)),
-            Box::new(Pattern::Variable(2)),
-            Box::new(Pattern::Variable(3)),
+            Box::new(Pattern::Variable(1, 1)),
+            Box::new(Pattern::Variable(2, 1)),
+            Box::new(Pattern::Variable(3, 1)),
         ]);
 
         let grammar = Grammar {
@@ -288,7 +296,7 @@ mod tests {
         let a = Pattern::OneOrMore(
             Box::new(Pattern::CharSequence(vec!['a' as u8])));
         let main = Pattern::Sequence(vec![
-            Box::new(Pattern::Optional(Box::new(Pattern::Variable(1)))),
+            Box::new(Pattern::Optional(Box::new(Pattern::Variable(1, 1)))),
             Box::new(Pattern::CharSequence(vec!['b' as u8]))
         ]);
 

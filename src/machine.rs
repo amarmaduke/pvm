@@ -4,7 +4,7 @@
 enum StackFrame {
     Return(isize),
     Backtrack(isize, usize),
-    PrecedenceBacktrack(isize, isize, usize, Option<usize>, isize)
+    PrecedenceBacktrack(isize, isize, usize, Option<usize>, Option<usize>, isize)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -72,10 +72,17 @@ impl Machine {
                             i = j;
                             fail = false;
                         },
-                        StackFrame::PrecedenceBacktrack(ret, a, j, jp, k) => {
-                            pc = ret;
-                            i = jp.unwrap();
-                            fail = false;
+                        StackFrame::PrecedenceBacktrack(ret, a, j, jm, jp, k) => {
+                            if (jp.is_none() || i > jp.unwrap()) && i != j {
+                                stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, jp, Some(i), k));
+                                pc = a;
+                                i = j;
+                                fail = false;
+                            } else if jp.is_some() {
+                                pc = ret;
+                                i = jm.unwrap_or(jp.unwrap());
+                                fail = false;
+                            }
                         },
                         StackFrame::Return(_) => {
                             pos_stack.pop();
@@ -145,21 +152,21 @@ impl Machine {
                         stack.push(StackFrame::Return(pc + 1));
                         pc += j;
                     },
-                    Instruction::PrecedenceCall(j, p) => {
+                    Instruction::PrecedenceCall(n, k) => {
                         let pc_clone = pc;
                         let stack_update = {
                             let mut result = false;
                             let memo = stack.iter().find(|&&x| match x {
-                                StackFrame::PrecedenceBacktrack(_, a, jp, _, _) => {
-                                    pc + j == a && i == jp
+                                StackFrame::PrecedenceBacktrack(_, a, j, _, _, _) => {
+                                    pc + n == a && i == j
                                 },
                                 _ => false
                             });
                             match memo {
-                                Some(&StackFrame::PrecedenceBacktrack(ret, a, jp, jpp, k)) => {
-                                    match jpp {
+                                Some(&StackFrame::PrecedenceBacktrack(_, _, _, _, jp, kp)) => {
+                                    match jp {
                                         Some(jr) => {
-                                            if p >= k {
+                                            if k >= kp {
                                                 pc += 1;
                                                 i = jr;
                                             } else {
@@ -172,7 +179,7 @@ impl Machine {
                                     }
                                 },
                                 None => {
-                                    pc += j;
+                                    pc += n;
                                     result = true;
                                 },
                                 _ => { }
@@ -180,21 +187,21 @@ impl Machine {
                             result
                         };
                         if stack_update {
-                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone + 1, pc_clone + j, i, None, p));
+                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone + 1, pc_clone + n, i, None, None, k));
                         }
                     },
                     Instruction::Return => {
                         if let Some(frame) = stack.pop() {
                             if let StackFrame::Return(ret) = frame {
                                 pc = ret;
-                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jp, k) = frame {
-                                if jp.is_some() && i >= jp.unwrap() {
-                                    pc = ret;
-                                    i = jp.unwrap();
-                                } else {
+                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jm, jp, k) = frame {
+                                if jp.is_none() || i > jp.unwrap() {
+                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, jp, Some(i), k));
                                     pc = a;
                                     i = j;
-                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, Some(i + 1), k));
+                                } else {
+                                    pc = ret;
+                                    i = jm.unwrap_or(jp.unwrap());
                                 }
                             }
                         }
@@ -252,7 +259,7 @@ impl Machine {
             }
         }
 
-        if !fail {
+        if !fail && i == input.len() {
             Ok(result)
         } else {
             Err(i)
@@ -278,6 +285,7 @@ mod tests {
         for i in 0..expected.len() {
             let result = machine.execute(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
+            println!("{:?}", result);
             println!("{}", subjects[i]);
             assert!(!fail == expected[i]);
         }
@@ -286,8 +294,8 @@ mod tests {
     fn execute_test_with_skip(program : Vec<Instruction>,
         skip : Vec<(u8, u8)>,
         subjects : &Vec<&str>,
-        expected : &Vec<bool>) {
-
+        expected : &Vec<bool>)
+    {
         let mut machine = Machine::new(program);
         machine.skip = skip;
         machine.skip_on = true;
@@ -632,8 +640,27 @@ mod tests {
             Instruction::Char(b'n'),
             Instruction::Return
         ];
-        let subjects = vec!["n", "n+n", "n+n+n", "n+n+n+n", "n+", "+n", "n+n+", "+n+n+"];
+        let subjects = vec!["n", "n+n+n", "n+n", "n+n+n+n", "n+", "+n", "n+n+", "+n+n+"];
         let expected = vec![true, true, true, true, false, false, false, false];
+        execute_test(program, &subjects, &expected);
+    }
+
+    #[test]
+    fn direct_left_recursion_with_tail() {
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(5),
+            Instruction::PrecedenceCall(-1, 0),
+            Instruction::Char(b'+'),
+            Instruction::Char(b'n'),
+            Instruction::Commit(2),
+            Instruction::Char(b'n'),
+            Instruction::Char(b';'),
+            Instruction::Return
+        ];
+        let subjects = vec!["n;", "n+n;", "n+n+n+n+n;", "n", "n+n", "n+", ";"];
+        let expected = vec![true, true, true, false, false, false, false];
         execute_test(program, &subjects, &expected);
     }
 }
