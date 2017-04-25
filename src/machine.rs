@@ -1,9 +1,11 @@
-
+use std::str::FromStr;
+use parser;
 
 #[derive(Debug, Copy, Clone)]
 enum StackFrame {
     Return(isize),
     Backtrack(isize, usize),
+    PrecedenceBacktrack(isize, isize, usize, Option<usize>, Option<usize>, isize)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -17,6 +19,7 @@ pub enum Instruction {
     Choice(isize),
     Jump(isize),
     Call(isize),
+    PrecedenceCall(isize, isize),
     Return,
     Commit(isize),
     BackCommit(isize),
@@ -31,6 +34,7 @@ pub enum Instruction {
 
 pub struct Machine {
     pub program: Vec<Instruction>,
+    pub rule_names: Vec<String>,
     pub skip : Vec<(u8, u8)>,
     pub skip_on : bool
 }
@@ -46,7 +50,7 @@ impl Machine {
         result
     }
 
-    pub fn execute(&mut self, input : Vec<u8>) -> Result<Vec<(usize, usize, usize)>, usize> {
+    pub fn execute<T : FromStr<Err=usize>>(&mut self, input : Vec<u8>) -> Result<Vec<(T, usize, usize)>, usize> {
         let mut stack = Vec::new();
         let mut pos_stack = Vec::new();
         let mut result = Vec::new();
@@ -63,12 +67,27 @@ impl Machine {
 
             if fail {
                 if let Some(frame) = stack.pop() {
-                    if let StackFrame::Backtrack(ret, j) = frame {
-                        pc = ret;
-                        i = j;
-                        fail = false;
-                    } else {
-                        pos_stack.pop();
+                    match frame {
+                        StackFrame::Backtrack(ret, j) => {
+                            pc = ret;
+                            i = j;
+                            fail = false;
+                        },
+                        StackFrame::PrecedenceBacktrack(ret, a, j, jm, jp, k) => {
+                            if (jp.is_none() || i > jp.unwrap()) && i != j {
+                                stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, jp, Some(i), k));
+                                pc = a;
+                                i = j;
+                                fail = false;
+                            } else if jp.is_some() {
+                                pc = ret;
+                                i = jm.unwrap_or(jp.unwrap());
+                                fail = false;
+                            }
+                        },
+                        StackFrame::Return(_) => {
+                            pos_stack.pop();
+                        }
                     }
                 } else {
                     break;
@@ -133,14 +152,61 @@ impl Machine {
                     Instruction::Call(j) => {
                         stack.push(StackFrame::Return(pc + 1));
                         pc += j;
-                    }
+                    },
+                    Instruction::PrecedenceCall(n, k) => {
+                        let pc_clone = pc;
+                        let stack_update = {
+                            let mut result = false;
+                            let memo = stack.iter().find(|&&x| match x {
+                                StackFrame::PrecedenceBacktrack(_, a, j, _, _, _) => {
+                                    pc + n == a && i == j
+                                },
+                                _ => false
+                            });
+                            match memo {
+                                Some(&StackFrame::PrecedenceBacktrack(_, _, _, _, jp, kp)) => {
+                                    match jp {
+                                        Some(jr) => {
+                                            if k >= kp {
+                                                pc += 1;
+                                                i = jr;
+                                            } else {
+                                                fail = true;
+                                            }
+                                        },
+                                        None => {
+                                            fail = true;
+                                        }
+                                    }
+                                },
+                                None => {
+                                    pc += n;
+                                    result = true;
+                                },
+                                _ => { }
+                            }
+                            result
+                        };
+                        if stack_update {
+                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone + 1, pc_clone + n, i, None, None, k));
+                        }
+                    },
                     Instruction::Return => {
                         if let Some(frame) = stack.pop() {
                             if let StackFrame::Return(ret) = frame {
                                 pc = ret;
+                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jm, jp, k) = frame {
+                                if jp.is_none() || i > jp.unwrap() {
+                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, jp, Some(i), k));
+                                    pc = a;
+                                    i = j;
+                                } else {
+                                    pc = ret;
+                                    i = jm.unwrap_or(jp.unwrap());
+                                }
                             }
                         }
-                    }
+                    },
                     Instruction::Commit(j) => {
                         stack.pop();
                         pc += j;
@@ -171,7 +237,8 @@ impl Machine {
                     },
                     Instruction::SavePos => {
                         if let Some((id, j)) = pos_stack.pop() {
-                            result.push((id, j, i));
+                            let marker = T::from_str(self.rule_names[id].as_str())?;
+                            result.push((marker, j, i));
                         }
                         pc += 1;
                     },
@@ -194,32 +261,52 @@ impl Machine {
             }
         }
 
-        if !fail {
+        if !fail && i == input.len() {
             Ok(result)
         } else {
             Err(i)
         }
     }
 
-    pub fn new(program : Vec<Instruction>) -> Machine {
-        Machine {
+    pub fn new(grammar : &str) -> Result<Machine, usize> {
+        let mut token_result = parser::tokenize(grammar);
+        let parse_tree = parser::parse(token_result.0, token_result.1)?;
+        let program = parse_tree.compile();
+
+        let mut rules = token_result.2.drain().collect::<Vec<(Vec<u8>, i32)>>();
+        rules.sort_by(|a, b| a.1.cmp(&b.1));
+        let rules_map = rules.drain(..).map(|x| String::from_utf8(x.0).ok().unwrap()).collect();
+
+        Ok(Machine {
             program: program,
+            rule_names: rules_map,
             skip: vec![],
             skip_on: false
-        }
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dummy::Dummy;
 
-    fn execute_test(program : Vec<Instruction>, subjects : &Vec<&str>, expected : &Vec<bool>) {
-        let mut machine = Machine::new(program);
+    fn execute_test(program : Vec<Instruction>,
+        subjects : &Vec<&str>,
+        expected : &Vec<bool>,
+        rule_names : Vec<String>)
+    {
+        let mut machine = Machine {
+            program: program,
+            rule_names: rule_names,
+            skip: vec![],
+            skip_on: false
+        };
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            let result = machine.execute(subjects[i].to_string().into_bytes());
+            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
+            println!("{:?}", result);
             println!("{}", subjects[i]);
             assert!(!fail == expected[i]);
         }
@@ -228,14 +315,20 @@ mod tests {
     fn execute_test_with_skip(program : Vec<Instruction>,
         skip : Vec<(u8, u8)>,
         subjects : &Vec<&str>,
-        expected : &Vec<bool>) {
-
-        let mut machine = Machine::new(program);
+        expected : &Vec<bool>,
+        rule_names : Vec<String>)
+    {
+        let mut machine = Machine {
+            program: program,
+            rule_names: rule_names,
+            skip: vec![],
+            skip_on: false
+        };
         machine.skip = skip;
         machine.skip_on = true;
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            let result = machine.execute(subjects[i].to_string().into_bytes());
+            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("{}", subjects[i]);
             assert!(!fail == expected[i]);
@@ -250,7 +343,7 @@ mod tests {
         ];
         let subjects = vec!["a", "aa"];
         let expected = vec![true, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -263,7 +356,7 @@ mod tests {
         ];
         let subjects = vec!["", "a", "aaa", "b"];
         let expected = vec![true, true, true, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -277,7 +370,7 @@ mod tests {
         ];
         let subjects = vec!["a", "aaa", "b", ""];
         let expected = vec![true, true, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -289,7 +382,7 @@ mod tests {
         ];
         let subjects = vec!["ab", "a", "b", ""];
         let expected = vec![true, false, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -306,7 +399,7 @@ mod tests {
         ];
         let subjects = vec!["a", "b", "c", "abc", ""];
         let expected = vec![true, true, true, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -336,8 +429,8 @@ mod tests {
         ];
         let subjects = vec!["ab", "abbb", "a", ""];
         let expected = vec![true, true, false, false];
-        execute_test(program1, &subjects, &expected);
-        execute_test(program2, &subjects, &expected);
+        execute_test(program1, &subjects, &expected, vec![]);
+        execute_test(program2, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -373,7 +466,7 @@ mod tests {
         ];
         let subjects = vec!["a", "ab", "aba", "abba", "z", "zbbaz", "garbage", ""];
         let expected = vec![true, true, true, true, true, false, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -396,7 +489,7 @@ mod tests {
         ];
         let subjects = vec!["a", "ab", "ababab", ""];
         let expected = vec![false, false, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -420,7 +513,8 @@ mod tests {
         ];
         let subjects = vec!["ab", "abbbb", "a", "b"];
         let expected = vec![true, true, false, false];
-        execute_test(program, &subjects, &expected);
+        let rule_names = vec!["main".to_string(), "b".to_string()];
+        execute_test(program, &subjects, &expected, rule_names);
     }
 
     #[test]
@@ -435,7 +529,7 @@ mod tests {
         ];
         let subjects = vec!["a", "b", "z", "aaa", "zzz", "abcdefghijkxyz", "a.z"];
         let expected = vec![true, true, true, true, true, true, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -452,7 +546,7 @@ mod tests {
         ];
         let subjects = vec!["a", "b", "c", "e", "abce", "ecba", "acbe", "d", "f", "abcde"];
         let expected = vec![true, true, true, true, true, true, true, false, false ,false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -469,7 +563,7 @@ mod tests {
         let skip = vec![(' ' as u8, ' ' as u8)];
         let subjects = vec!["ababab", "ab a b ab", "ab a  b  a b", " a   b ", "c"];
         let expected = vec![true, true, true, true, false];
-        execute_test_with_skip(program, skip, &subjects, &expected);
+        execute_test_with_skip(program, skip, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -487,7 +581,7 @@ mod tests {
         let skip = vec![(' ' as u8, ' ' as u8)];
         let subjects = vec!["a b", "a    b", "   a   b    ", "ab"];
         let expected = vec![true, true, true, false];
-        execute_test_with_skip(program, skip, &subjects, &expected);
+        execute_test_with_skip(program, skip, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -502,7 +596,7 @@ mod tests {
         ];
         let subjects = vec!["", "a", "aaa", "b"];
         let expected = vec![true, true, true, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -521,7 +615,7 @@ mod tests {
         ];
         let subjects = vec!["b", "ba", "bababbaa", "a", "ab"];
         let expected = vec![true, true, true, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -542,7 +636,7 @@ mod tests {
         ];
         let subjects = vec!["a", "aa", "ab", "abbaabaa", "b", "ba"];
         let expected = vec![true, true, true, true, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
     }
 
     #[test]
@@ -558,6 +652,43 @@ mod tests {
         ];
         let subjects = vec!["ab", "b", "c", "aa"];
         let expected = vec![true, true, false, false];
-        execute_test(program, &subjects, &expected);
+        execute_test(program, &subjects, &expected, vec![]);
+    }
+
+    #[test]
+    fn direct_left_recursion() {
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(5),
+            Instruction::PrecedenceCall(-1, 0),
+            Instruction::Char(b'+'),
+            Instruction::Char(b'n'),
+            Instruction::Commit(2),
+            Instruction::Char(b'n'),
+            Instruction::Return
+        ];
+        let subjects = vec!["n", "n+n+n", "n+n", "n+n+n+n", "n+", "+n", "n+n+", "+n+n+"];
+        let expected = vec![true, true, true, true, false, false, false, false];
+        execute_test(program, &subjects, &expected, vec![]);
+    }
+
+    #[test]
+    fn direct_left_recursion_with_tail() {
+        let program = vec![
+            Instruction::Call(2),
+            Instruction::Stop,
+            Instruction::Choice(5),
+            Instruction::PrecedenceCall(-1, 0),
+            Instruction::Char(b'+'),
+            Instruction::Char(b'n'),
+            Instruction::Commit(2),
+            Instruction::Char(b'n'),
+            Instruction::Char(b';'),
+            Instruction::Return
+        ];
+        let subjects = vec!["n;", "n+n;", "n+n+n+n+n;", "n", "n+n", "n+", ";"];
+        let expected = vec![true, true, true, false, false, false, false];
+        execute_test(program, &subjects, &expected, vec![]);
     }
 }
