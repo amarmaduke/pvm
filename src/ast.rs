@@ -187,13 +187,19 @@ impl Grammar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dummy::Dummy;
 
-    fn execute_test(grammar : &Grammar, subjects : &Vec<&str>, expected : &Vec<bool>) {
+    fn execute_test(grammar : &Grammar, subjects : &Vec<&str>, expected : &Vec<bool>, rule_names : Vec<String>) {
         let program = grammar.compile();
-        let mut machine = machine::Machine::new(program);
+        let mut machine = machine::Machine {
+            program: program,
+            rule_names: rule_names,
+            skip: vec![],
+            skip_on: false
+        };
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            let result = machine.execute(subjects[i].to_string().into_bytes());
+            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("{:?}", machine.program);
             println!("{}", subjects[i]);
@@ -204,9 +210,10 @@ mod tests {
     #[test]
     fn simple_char_grammar_rules() {
         /*
-            main { .;char_class;char_seq }
+            main { any;char_class;char_seq }
             char_class { ['a'..'z''A'..'A'] }
             char_seq { 'a';'b';'c' }
+            any { . }
         */
         let char_class = Pattern::CharClass(vec![
             ('a' as u8, Some('z' as u8)),
@@ -234,7 +241,8 @@ mod tests {
         };
         let subjects = vec!["azabc", "Bkabc", "AAabc", "aqd", "xyz"];
         let expected = vec![true, true, true, false, false];
-        execute_test(&grammar, &subjects, &expected);
+        let rule_names = vec!["main".to_string(), "any".to_string(), "char_class".to_string(), "char_seq".to_string()];
+        execute_test(&grammar, &subjects, &expected, rule_names);
     }
 
     #[test]
@@ -262,7 +270,8 @@ mod tests {
         };
         let subjects = vec!["b", "a", "z", "aa", ""];
         let expected = vec![true, true, true, false, false];
-        execute_test(&grammar, &subjects, &expected);
+        let rule_names = vec!["main".to_string()];
+        execute_test(&grammar, &subjects, &expected, rule_names);
     }
 
     #[test]
@@ -284,7 +293,8 @@ mod tests {
         };
         let subjects = vec!["a", "aaaa", "", "b", "bbbbb", "c"];
         let expected = vec![true, true, true, true, true, false];
-        execute_test(&grammar, &subjects, &expected);
+        let rule_names = vec!["main".to_string()];
+        execute_test(&grammar, &subjects, &expected, rule_names);
     }
 
     #[test]
@@ -309,6 +319,7 @@ mod tests {
         };
         let subjects = vec!["b", "ab", "aaaaab", "", "bb"];
         let expected = vec![true, true, true, false, false];
-        execute_test(&grammar, &subjects, &expected);
+        let rule_names = vec!["main".to_string(), "a".to_string()];
+        execute_test(&grammar, &subjects, &expected, rule_names);
     }
 }

@@ -25,7 +25,7 @@ pub enum Token {
     Letter(u8)
 }
 
-pub fn tokenize(grammar : &String) -> (Vec<Token>, i32) {
+pub fn tokenize(grammar : &str) -> (Vec<Token>, i32, HashMap<Vec<u8>, i32>) {
     let mut iterator = grammar.chars();
     let mut tokens = vec![];
     let mut name = vec![];
@@ -135,7 +135,7 @@ pub fn tokenize(grammar : &String) -> (Vec<Token>, i32) {
             }
         }
     }
-    (tokens, i)
+    (tokens, i, map)
 }
 
 pub fn parse(tokens : Vec<Token>, rule_count : i32) -> Result<ast::Grammar, usize> {
@@ -425,22 +425,16 @@ fn parse_class(i : &mut usize, tokens : &Vec<Token>) -> Result<ast::Pattern, usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dummy::Dummy;
     use machine;
 
-    fn execute_test(grammar : &String, subjects : &Vec<&str>, expected : &Vec<bool>) {
-        let token_result = tokenize(grammar);
-        println!("{:?}", token_result.0);
-        let parse_result = parse(token_result.0, token_result.1);
-        println!("{:?}", parse_result);
-        assert!(parse_result.is_ok());
-        let grammar_object = parse_result.ok().unwrap();
-
-        let program = grammar_object.compile();
-        println!("{:?}", program);
-        let mut machine = machine::Machine::new(program);
+    fn execute_test(grammar : &str, subjects : &Vec<&str>, expected : &Vec<bool>) {
+        let machine_result = machine::Machine::new(grammar);
+        assert!(machine_result.is_ok());
         assert!(subjects.len() == expected.len());
+        let mut machine = machine_result.ok().unwrap();
         for i in 0..expected.len() {
-            let result = machine.execute(subjects[i].to_string().into_bytes());
+            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("machine result: {:?}", result);
             println!("{}", subjects[i]);
@@ -456,7 +450,7 @@ mod tests {
             b { \"bu\"* }
             c { [a-\\\"c]? }
             apple { &.!(\" \") }
-        ".to_string();
+        ";
 
         let tokens = tokenize(&grammar).0;
         println!("{:?}", tokens);
@@ -483,7 +477,7 @@ mod tests {
             main { .char_class char_seq }
             char_class { [a-zA] }
             char_seq { \"abc\" }
-        ".to_string();
+        ";
 
         let subjects = vec!["azabc", "Bkabc", "AAabc", "aqd", "xyz"];
         let expected = vec![true, true, true, false, false];
@@ -492,7 +486,7 @@ mod tests {
 
     #[test]
     fn simple_suffix_grammar() {
-        let grammar = "main { 'a'+ 'b'* 'c'? }".to_string();
+        let grammar = "main { 'a'+ 'b'* 'c'? }";
         let subjects = vec!["ac", "a", "abb", "aaabbbc", "aaabbb", "bb", "c", "z"];
         let expected = vec![true, true, true, true, true, false, false, false];
         execute_test(&grammar, &subjects, &expected);
@@ -500,7 +494,7 @@ mod tests {
 
     #[test]
     fn simple_choice_grammar() {
-        let grammar = "main { 'a' / 'b' / 'c' }".to_string();
+        let grammar = "main { 'a' / 'b' / 'c' }";
         let subjects = vec!["a", "b", "c", "abc", "z"];
         let expected = vec![true, true, true, false, false];
         execute_test(&grammar, &subjects, &expected);
@@ -508,7 +502,7 @@ mod tests {
 
     #[test]
     fn simple_prefix_grammar() {
-        let grammar = "main { 'a' &'b' 'b' 'c' !'d' }".to_string();
+        let grammar = "main { 'a' &'b' 'b' 'c' !'d' }";
         let subjects = vec!["abc", "abc", "ac", "abcd"];
         let expected = vec![true, true, false, false];
         execute_test(&grammar, &subjects, &expected);
@@ -516,7 +510,7 @@ mod tests {
 
     #[test]
     fn simple_parentheticals() {
-        let grammar = "main { ('a' / 'b') / 'c' ('d'.)+ }".to_string();
+        let grammar = "main { ('a' / 'b') / 'c' ('d'.)+ }";
         let subjects = vec!["a", "b", "cdx", "cdxdcdy", "x", "c"];
         let expected = vec![true, true, true, true, false, false];
         execute_test(&grammar, &subjects, &expected);
@@ -524,17 +518,25 @@ mod tests {
 
     #[test]
     fn parenthetical_and_lookahead() {
-        let grammar = "main { &('b' / 'a') .* }".to_string();
+        let grammar = "main { &('b' / 'a') .* }";
         let subjects = vec!["a", "b", "aa", "ab", "azzd", "c", "zab"];
         let expected = vec![true, true, true, true, true, false, false];
         execute_test(&grammar, &subjects, &expected);
     }
 
     #[test]
-    fn simple_left_recursion() {
-        let grammar = "main { (main:1 \"+n\" / 'n') ';' }".to_string();
+    fn direct_left_recursion() {
+        let grammar = "main { (main:1 \"+n\" / 'n') ';' }";
         let subjects = vec!["n;", "n+n;", "n+n+n+n+n+n;", "n", "n+;", "+n;", "n+n", ";"];
         let expected = vec![true, true, true, false, false, false, false, false];
+        execute_test(&grammar, &subjects, &expected);
+    }
+
+    #[test]
+    fn indirect_left_recursion() {
+        let grammar = "main { L } L { P:1 '.x' / 'x' } P { P:1 '(n)' / L:1 }";
+        let subjects = vec!["x", "x.x", "x(n).x", "x(n)(n).x(n).x", "x.", "x(n)x", "(n)"];
+        let expected = vec![true, true, true, true, false, false, false];
         execute_test(&grammar, &subjects, &expected);
     }
 
@@ -577,7 +579,7 @@ mod tests {
 
             s { ws* }
             ws { [ \\t\\r\\n] }
-        ".to_string();
+        ";
         let subjects = vec![
             "main { ('a' / 'b') / 'c' ('d'.)+ }",
             "main { 'a' &'b' 'b' 'c' !'d' }",
