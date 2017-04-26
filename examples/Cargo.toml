@@ -1,7 +1,7 @@
 [package]
-name = "peg-examples"
+name = "calculator"
 version = "0.1.0"
 authors = ["Andrew Marmaduke <marmaduke.andrew@gmail.com>"]
 
 [dependencies]
-peg = { path = "../" }
+pvm = { path = "../" }

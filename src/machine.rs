@@ -57,6 +57,7 @@ impl Machine {
         let mut pc = 0;
         let mut i = 0;
         let mut fail = false;
+        let mut recursing = false;
 
         loop {
             if self.skip_on {
@@ -83,6 +84,7 @@ impl Machine {
                                 pc = ret;
                                 i = jm.unwrap_or(jp.unwrap());
                                 fail = false;
+                                recursing = false;
                             }
                         },
                         StackFrame::Return(_) => {
@@ -154,6 +156,7 @@ impl Machine {
                         pc += j;
                     },
                     Instruction::PrecedenceCall(n, k) => {
+                        recursing = true;
                         let pc_clone = pc;
                         let stack_update = {
                             let mut result = false;
@@ -203,6 +206,7 @@ impl Machine {
                                 } else {
                                     pc = ret;
                                     i = jm.unwrap_or(jp.unwrap());
+                                    recursing = false;
                                 }
                             }
                         }
@@ -232,13 +236,17 @@ impl Machine {
                         }
                     },
                     Instruction::PushPos(id) => {
-                        pos_stack.push((id, i));
+                        if !recursing {
+                            pos_stack.push((id, i));
+                        }
                         pc += 1;
                     },
                     Instruction::SavePos => {
-                        if let Some((id, j)) = pos_stack.pop() {
-                            let marker = T::from_str(self.rule_names[id].as_str())?;
-                            result.push((marker, j, i));
+                        if !recursing {
+                            if let Some((id, j)) = pos_stack.pop() {
+                                let marker = T::from_str(self.rule_names[id].as_str())?;
+                                result.push((marker, j, i));
+                            }
                         }
                         pc += 1;
                     },

@@ -1,54 +1,88 @@
 
-extern crate peg;
+extern crate pvm;
 
-use peg::*;
-use peg::machine::*;
+use std::io;
+use std::str::FromStr;
 
-fn execute_test(program : Vec<Instruction>, subjects : &Vec<&str>, expected : &Vec<bool>) {
-    let mut machine = Machine::new(program);
-    assert!(subjects.len() == expected.len());
-    for i in 0..expected.len() {
-        machine.execute(subjects[i].to_string().into_bytes());
-        println!("{}", machine.fail);
-        assert!(!machine.fail == expected[i]);
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum Rules {
+    Main,
+    Expr,
+    Plus,
+    Minus,
+    Times,
+    Divide,
+    Num,
+    Open,
+    Close,
+    S,
+    Ws
+}
+
+impl FromStr for Rules {
+    type Err = usize;
+
+    fn from_str(s : &str) -> Result<Self, Self::Err> {
+        match s {
+            "main" => Ok(Rules::Main),
+            "expr" => Ok(Rules::Expr),
+            "plus" => Ok(Rules::Plus),
+            "minus" => Ok(Rules::Minus),
+            "times" => Ok(Rules::Times),
+            "divide" => Ok(Rules::Divide),
+            "num" => Ok(Rules::Num),
+            "open" => Ok(Rules::Open),
+            "close" => Ok(Rules::Close),
+            "s" => Ok(Rules::S),
+            "ws" => Ok(Rules::Ws),
+            _ => Err(0)
+        }
     }
 }
 
-fn many_simple_subparser() {
-    /*
-        main { a b c }
-        a { 'a' / 'z' }
-        b { 'b'* }
-        c { a / b }
-    */
-    let program = vec![
-        Instruction::Call(16),
-        Instruction::Jump(19),
-        Instruction::Choice(3),
-        Instruction::Char('a' as u8),
-        Instruction::Commit(2),
-        Instruction::Char('z' as u8),
-        Instruction::Return,
-        Instruction::Choice(3),
-        Instruction::Char('b' as u8),
-        Instruction::Commit(-2),
-        Instruction::Return,
-        Instruction::Choice(3),
-        Instruction::Call(-10),
-        Instruction::Commit(2),
-        Instruction::Call(-7),
-        Instruction::Return,
-        Instruction::Call(-14),
-        Instruction::Call(-10),
-        Instruction::Call(-7),
-        Instruction::Return,
-        Instruction::Stop
-    ];
-    let subjects = vec!["z"];
-    let expected = vec![true];
-    execute_test(program, &subjects, &expected);
-}
-
 fn main() {
-    many_simple_subparser();
+    let grammar = "
+        main { s expr }
+        expr { 
+            expr:1 plus expr:2
+            / expr:1 minus expr:2
+            / expr:2 times expr:3
+            / expr:2 divide expr:3
+            / minus expr:4
+            / open expr:1 close
+            / num
+        }
+
+        plus { '+' s }
+        minus { '-' s }
+        times { '*' s  }
+        divide { '/' s }
+        open { '(' s }
+        close { ')' s }
+        num { [1-9][0-9]* s }
+        
+        s { ws* }
+        ws { [ \\t\\r\\n] }
+    ";
+
+    match pvm::Machine::new(&grammar) {
+        Ok(mut machine) => {
+            loop {
+                let mut buffer = String::new();
+
+                match io::stdin().read_line(&mut buffer) {
+                    Ok(_) => {
+                        if buffer == "quit" { return; }
+                        let output = machine.execute::<Rules>(buffer.into_bytes());
+                        println!("{:?}", output);
+                    },
+                    Err(error) => println!("Stdin Error: {}", error)
+                }
+            }
+        },
+        Err(x) => {
+            println!("Encountered error: {}", x);
+        }
+    }
+
 }
