@@ -1,4 +1,6 @@
 use std::str::FromStr;
+use std::hash::Hash;
+use std::collections::HashSet;
 use parser;
 
 #[derive(Debug, Copy, Clone)]
@@ -50,16 +52,18 @@ impl Machine {
         result
     }
 
-    pub fn execute<T : FromStr<Err=usize>>(&mut self, input : Vec<u8>) -> Result<Vec<(T, usize, usize)>, usize> {
+    pub fn execute<T>(&mut self, input : Vec<u8>) -> Result<Vec<(T, usize, usize)>, usize>
+        where T : FromStr<Err=usize> + Hash + Eq
+    {
         let mut stack = Vec::new();
         let mut pos_stack = Vec::new();
-        let mut result = Vec::new();
+        let mut result = HashSet::new();
         let mut pc = 0;
         let mut i = 0;
         let mut fail = false;
-        let mut recursing = false;
 
         loop {
+            println!("i: {}, {:?}", i, stack);
             if self.skip_on {
                 while i < input.len() && self.skip_parser(input[i]) {
                     i += 1;
@@ -84,7 +88,6 @@ impl Machine {
                                 pc = ret;
                                 i = jm.unwrap_or(jp.unwrap());
                                 fail = false;
-                                recursing = false;
                             }
                         },
                         StackFrame::Return(_) => {
@@ -156,7 +159,6 @@ impl Machine {
                         pc += j;
                     },
                     Instruction::PrecedenceCall(n, k) => {
-                        recursing = true;
                         let pc_clone = pc;
                         let stack_update = {
                             let mut result = false;
@@ -206,7 +208,6 @@ impl Machine {
                                 } else {
                                     pc = ret;
                                     i = jm.unwrap_or(jp.unwrap());
-                                    recursing = false;
                                 }
                             }
                         }
@@ -236,16 +237,14 @@ impl Machine {
                         }
                     },
                     Instruction::PushPos(id) => {
-                        if !recursing {
-                            pos_stack.push((id, i));
-                        }
+                        pos_stack.push((id, i));
                         pc += 1;
                     },
                     Instruction::SavePos => {
-                        if !recursing {
-                            if let Some((id, j)) = pos_stack.pop() {
+                        if let Some((id, j)) = pos_stack.pop() {
+                            if j != i {
                                 let marker = T::from_str(self.rule_names[id].as_str())?;
-                                result.push((marker, j, i));
+                                result.insert((marker, j, i));
                             }
                         }
                         pc += 1;
@@ -268,9 +267,10 @@ impl Machine {
                 }
             }
         }
+        println!("{:?}", pos_stack);
 
         if !fail && i == input.len() {
-            Ok(result)
+            Ok(result.drain().collect())
         } else {
             Err(i)
         }

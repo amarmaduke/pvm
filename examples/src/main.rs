@@ -41,6 +41,20 @@ impl FromStr for Rules {
 }
 
 fn main() {
+    let minimal_grammar = "
+        main { expr ws }
+        expr { 
+            expr:1 plus expr:1
+            / expr:1 times expr:1
+            / num
+        }
+
+        plus { '+' }
+        times { '*' }
+        num { [1-9][0-9]* }
+
+        ws { [ \\t\\r\\n] }
+    ";
     let grammar = "
         main { s expr }
         expr { 
@@ -49,7 +63,7 @@ fn main() {
             / expr:2 times expr:3
             / expr:2 divide expr:3
             / minus expr:4
-            / open expr:1 close
+            / open expr:0 close
             / num
         }
 
@@ -65,7 +79,7 @@ fn main() {
         ws { [ \\t\\r\\n] }
     ";
 
-    match pvm::Machine::new(&grammar) {
+    match pvm::Machine::new(&minimal_grammar) {
         Ok(mut machine) => {
             loop {
                 let mut buffer = String::new();
