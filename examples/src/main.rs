@@ -44,8 +44,8 @@ fn main() {
     let minimal_grammar = "
         main { expr ws }
         expr { 
-            expr:1 plus expr:1
-            / expr:1 times expr:1
+            expr:1 plus expr:2
+            / expr:2 times expr:3
             / num
         }
 
@@ -81,6 +81,8 @@ fn main() {
 
     match pvm::Machine::new(&minimal_grammar) {
         Ok(mut machine) => {
+            machine.execute::<Rules>("1+1*2".to_owned().into_bytes());
+            /*
             loop {
                 let mut buffer = String::new();
 
@@ -93,6 +95,7 @@ fn main() {
                     Err(error) => println!("Stdin Error: {}", error)
                 }
             }
+            */
         },
         Err(x) => {
             println!("Encountered error: {}", x);

@@ -62,8 +62,10 @@ impl Machine {
         let mut i = 0;
         let mut fail = false;
 
+        println!("{:?}", self.program);
+
         loop {
-            println!("i: {}, {:?}", i, stack);
+            //println!("i: {}, {:?}", i, stack);
             if self.skip_on {
                 while i < input.len() && self.skip_parser(input[i]) {
                     i += 1;
@@ -267,7 +269,6 @@ impl Machine {
                 }
             }
         }
-        println!("{:?}", pos_stack);
 
         if !fail && i == input.len() {
             Ok(result.drain().collect())

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Dummy(i32);
 
 impl FromStr for Dummy {
