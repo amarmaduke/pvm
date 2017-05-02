@@ -1,6 +1,7 @@
 use std::str::FromStr;
 use std::hash::Hash;
 use std::collections::HashSet;
+use std::marker::PhantomData;
 use parser;
 
 #[derive(Debug, Copy, Clone)]
@@ -34,14 +35,26 @@ pub enum Instruction {
     ToggleSkip
 }
 
-pub struct Machine {
+pub struct Machine<T> 
+    where T : Eq + Hash + FromStr
+{
     pub program: Vec<Instruction>,
     pub rule_names: Vec<String>,
     pub skip : Vec<(u8, u8)>,
-    pub skip_on : bool
+    pub skip_on : bool,
+    pub marker : PhantomData<T>
 }
 
-impl Machine {
+#[derive(Debug)]
+pub enum Error<T> {
+    MarkerError(T),
+    ParserError(usize),
+    MachineError(usize)
+}
+
+impl<T> Machine<T>
+    where T : Eq + Hash + FromStr
+{
 
     pub fn skip_parser(&mut self, x : u8) -> bool {
         let mut result = false;
@@ -52,9 +65,7 @@ impl Machine {
         result
     }
 
-    pub fn execute<T>(&mut self, input : Vec<u8>) -> Result<Vec<(T, usize, usize)>, usize>
-        where T : FromStr<Err=usize> + Hash + Eq
-    {
+    pub fn execute(&mut self, input : Vec<u8>) -> Result<Vec<(T, usize, usize)>, Error<T::Err>> {
         let mut stack = Vec::new();
         let mut pos_stack = Vec::new();
         let mut result = HashSet::new();
@@ -245,8 +256,10 @@ impl Machine {
                     Instruction::SavePos => {
                         if let Some((id, j)) = pos_stack.pop() {
                             if j != i {
-                                let marker = T::from_str(self.rule_names[id].as_str())?;
-                                result.insert((marker, j, i));
+                                match T::from_str(self.rule_names[id].as_str()) {
+                                    Ok(marker) => result.insert((marker, j, i)),
+                                    Err(e) => return Err(Error::MarkerError(e))
+                                };
                             }
                         }
                         pc += 1;
@@ -273,11 +286,11 @@ impl Machine {
         if !fail && i == input.len() {
             Ok(result.drain().collect())
         } else {
-            Err(i)
+            Err(Error::MachineError(i))
         }
     }
 
-    pub fn new(grammar : &str) -> Result<Machine, usize> {
+    pub fn new(grammar : &str) -> Result<Machine<T>, usize> {
         let mut token_result = parser::tokenize(grammar);
         let parse_tree = parser::parse(token_result.0, token_result.1)?;
         let program = parse_tree.compile();
@@ -290,7 +303,8 @@ impl Machine {
             program: program,
             rule_names: rules_map,
             skip: vec![],
-            skip_on: false
+            skip_on: false,
+            marker: PhantomData
         })
     }
 }
@@ -298,22 +312,22 @@ impl Machine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dummy::Dummy;
 
     fn execute_test(program : Vec<Instruction>,
         subjects : &Vec<&str>,
         expected : &Vec<bool>,
         rule_names : Vec<String>)
     {
-        let mut machine = Machine {
+        let mut machine = Machine::<String> {
             program: program,
             rule_names: rule_names,
             skip: vec![],
-            skip_on: false
+            skip_on: false,
+            marker: PhantomData
         };
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
+            let result = machine.execute(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("{:?}", result);
             println!("{}", subjects[i]);
@@ -327,17 +341,18 @@ mod tests {
         expected : &Vec<bool>,
         rule_names : Vec<String>)
     {
-        let mut machine = Machine {
+        let mut machine = Machine::<String> {
             program: program,
             rule_names: rule_names,
             skip: vec![],
-            skip_on: false
+            skip_on: false,
+            marker: PhantomData
         };
         machine.skip = skip;
         machine.skip_on = true;
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
+            let result = machine.execute(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("{}", subjects[i]);
             assert!(!fail == expected[i]);

@@ -425,16 +425,15 @@ fn parse_class(i : &mut usize, tokens : &Vec<Token>) -> Result<ast::Pattern, usi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dummy::Dummy;
     use machine;
 
     fn execute_test(grammar : &str, subjects : &Vec<&str>, expected : &Vec<bool>) {
-        let machine_result = machine::Machine::new(grammar);
+        let machine_result = machine::Machine::<String>::new(grammar);
         assert!(machine_result.is_ok());
         assert!(subjects.len() == expected.len());
         let mut machine = machine_result.ok().unwrap();
         for i in 0..expected.len() {
-            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
+            let result = machine.execute(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("machine result: {:?}", result);
             println!("{}", subjects[i]);

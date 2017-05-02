@@ -187,19 +187,20 @@ impl Grammar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dummy::Dummy;
+    use std::marker::PhantomData;
 
     fn execute_test(grammar : &Grammar, subjects : &Vec<&str>, expected : &Vec<bool>, rule_names : Vec<String>) {
         let program = grammar.compile();
-        let mut machine = machine::Machine {
+        let mut machine = machine::Machine::<String> {
             program: program,
             rule_names: rule_names,
             skip: vec![],
-            skip_on: false
+            skip_on: false,
+            marker: PhantomData
         };
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
+            let result = machine.execute(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("{:?}", machine.program);
             println!("{}", subjects[i]);

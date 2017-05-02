@@ -1,7 +1,6 @@
 
 mod ast;
 mod parser;
-mod dummy;
 mod machine;
 
-pub type Machine = machine::Machine;
+pub type Machine<T> = machine::Machine<T>;
