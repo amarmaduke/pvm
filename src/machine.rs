@@ -73,10 +73,10 @@ impl<T> Machine<T>
         let mut i = 0;
         let mut fail = false;
 
-        println!("{:?}", self.program);
+        //println!("{:?}", self.program);
 
         loop {
-            //println!("i: {}, {:?}", i, stack);
+            println!("i: {}, fail: {}, pc: {}, \n {:?} \n {:?}", i, fail, pc, stack, pos_stack);
             if self.skip_on {
                 while i < input.len() && self.skip_parser(input[i]) {
                     i += 1;
