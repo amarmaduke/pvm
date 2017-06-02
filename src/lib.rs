@@ -2,6 +2,7 @@
 mod ast;
 mod parser;
 mod machine;
+mod graph;
 
 pub type Machine<T> = machine::Machine<T>;
 

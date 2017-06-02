@@ -3,12 +3,13 @@ use std::hash::Hash;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 use parser;
+use graph;
 
 #[derive(Debug, Copy, Clone)]
 enum StackFrame {
     Return(isize),
     Backtrack(isize, usize),
-    PrecedenceBacktrack(isize, isize, usize, Option<usize>, Option<usize>, isize)
+    PrecedenceBacktrack(isize, isize, usize, Option<usize>, isize, bool)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -55,7 +56,6 @@ pub enum Error<T> {
 impl<T> Machine<T>
     where T : Eq + Hash + FromStr
 {
-
     pub fn skip_parser(&mut self, x : u8) -> bool {
         let mut result = false;
         for t in &self.skip {
@@ -72,8 +72,9 @@ impl<T> Machine<T>
         let mut pc = 0;
         let mut i = 0;
         let mut fail = false;
+        let metadata = graph::metadata(&self.program);
 
-        //println!("{:?}", self.program);
+        println!("{:?}", self.program);
 
         loop {
             println!("i: {}, fail: {}, pc: {}, \n {:?} \n {:?}", i, fail, pc, stack, pos_stack);
@@ -85,22 +86,34 @@ impl<T> Machine<T>
 
             if fail {
                 if let Some(frame) = stack.pop() {
+                    use self::StackFrame::*;
                     match frame {
-                        StackFrame::Backtrack(ret, j) => {
+                        Backtrack(ret, j) => {
                             pc = ret;
                             i = j;
                             fail = false;
                         },
-                        StackFrame::PrecedenceBacktrack(ret, a, j, jm, jp, k) => {
+                        PrecedenceBacktrack(ret, a, j, jp, k, f) => {
                             if (jp.is_none() || i > jp.unwrap()) && i != j {
-                                stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, jp, Some(i), k));
+                                stack.push(PrecedenceBacktrack(ret, a, j, Some(i), k, true));
                                 pc = a;
                                 i = j;
                                 fail = false;
                             } else if jp.is_some() {
-                                pc = ret;
-                                i = jm.unwrap_or(jp.unwrap());
-                                fail = false;
+                                i = jp.unwrap();
+                                fail = f;
+                                
+                                let m = metadata.get(&(ret as usize))
+                                    .expect(&format!("Metadata generation missed call at instruction #{}", ret));
+                                let is_left_recursive = m.is_left_call && m.is_cyclic;
+                                if is_left_recursive {
+                                    pc = m.jump_position as isize;
+                                    while let Some(&StackFrame::Backtrack(_, _)) = stack.get(stack.len() - 1) {
+                                        stack.pop();
+                                    }
+                                } else {
+                                    pc = ret + 1;
+                                }
                             }
                         },
                         StackFrame::Return(_) => {
@@ -111,8 +124,9 @@ impl<T> Machine<T>
                     break;
                 }
             } else {
+                use self::Instruction::*;
                 match self.program[pc as usize] {
-                    Instruction::Char(c) => {
+                    Char(c) => {
                         if i < input.len() && input[i] == c {
                             pc += 1;
                             i += 1;
@@ -120,7 +134,7 @@ impl<T> Machine<T>
                             fail = true;
                         }
                     },
-                    Instruction::TestChar(c, j) => {
+                    TestChar(c, j) => {
                         if i < input.len() && input[i] == c {
                             pc += 1;
                             i += 1;
@@ -128,7 +142,7 @@ impl<T> Machine<T>
                             pc += j;
                         }
                     },
-                    Instruction::Any => {
+                    Any => {
                         if i < input.len() {
                             pc += 1;
                             i += 1;
@@ -136,7 +150,7 @@ impl<T> Machine<T>
                             fail = true;
                         }
                     },
-                    Instruction::TestAny(n, j) => {
+                    TestAny(n, j) => {
                         if i + n < input.len() {
                             pc += 1;
                             i += n;
@@ -144,7 +158,7 @@ impl<T> Machine<T>
                             pc += j;
                         }
                     },
-                    Instruction::CharRange(l, r) => {
+                    CharRange(l, r) => {
                         if i < input.len() && input[i] >= l && input[i] <= r {
                             pc += 1;
                             i += 1;
@@ -152,7 +166,7 @@ impl<T> Machine<T>
                             fail = true;
                         }
                     },
-                    Instruction::CharRangeLink(l, r, j) => {
+                    CharRangeLink(l, r, j) => {
                         if i < input.len() && input[i] >= l && input[i] <= r {
                             pc += j;
                             i += 1;
@@ -160,18 +174,18 @@ impl<T> Machine<T>
                             pc += 1;
                         }
                     }
-                    Instruction::Choice(j) => {
+                    Choice(j) => {
                         stack.push(StackFrame::Backtrack(pc + j, i));
                         pc += 1;
                     }
-                    Instruction::Jump(j) => {
+                    Jump(j) => {
                         pc += j;
                     }
-                    Instruction::Call(j) => {
+                    Call(j) => {
                         stack.push(StackFrame::Return(pc + 1));
                         pc += j;
                     },
-                    Instruction::PrecedenceCall(n, k) => {
+                    PrecedenceCall(n, k) => {
                         let pc_clone = pc;
                         let stack_update = {
                             let mut result = false;
@@ -182,7 +196,7 @@ impl<T> Machine<T>
                                 _ => false
                             });
                             match memo {
-                                Some(&StackFrame::PrecedenceBacktrack(_, _, _, _, jp, kp)) => {
+                                Some(&StackFrame::PrecedenceBacktrack(_, _, _, jp, kp, _)) => {
                                     match jp {
                                         Some(jr) => {
                                             if k >= kp {
@@ -206,30 +220,41 @@ impl<T> Machine<T>
                             result
                         };
                         if stack_update {
-                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone + 1, pc_clone + n, i, None, None, k));
+                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone, pc_clone + n, i, None, k, false));
                         }
                     },
-                    Instruction::Return => {
+                    Return => {
                         if let Some(frame) = stack.pop() {
                             if let StackFrame::Return(ret) = frame {
                                 pc = ret;
-                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jm, jp, k) = frame {
+                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jp, k, _) = frame {
                                 if jp.is_none() || i > jp.unwrap() {
-                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, jp, Some(i), k));
+                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, Some(i), k, false));
                                     pc = a;
                                     i = j;
                                 } else {
-                                    pc = ret;
-                                    i = jm.unwrap_or(jp.unwrap());
+                                    i = jp.unwrap();
+                                    
+                                    let m = metadata.get(&(ret as usize))
+                                        .expect(&format!("Metadata generation missed call at instruction #{}", ret));
+                                    let is_left_recursive = m.is_left_call && m.is_cyclic;
+                                    if is_left_recursive {
+                                        pc = m.jump_position as isize;
+                                        while let Some(&StackFrame::Backtrack(_, _)) = stack.get(stack.len() - 1) {
+                                            stack.pop();
+                                        }
+                                    } else {
+                                        pc = ret + 1;
+                                    }
                                 }
                             }
                         }
                     },
-                    Instruction::Commit(j) => {
+                    Commit(j) => {
                         stack.pop();
                         pc += j;
                     },
-                    Instruction::BackCommit(j) => {
+                    BackCommit(j) => {
                         if let Some(frame) = stack.pop() {
                             if let StackFrame::Backtrack(_, k) = frame {
                                 pc += j;
@@ -237,7 +262,7 @@ impl<T> Machine<T>
                             }
                         }
                     },
-                    Instruction::PartialCommit(j) => {
+                    PartialCommit(j) => {
                         if stack.len() > 1 {
                             pc += j;
                             let pos = stack.len() - 1;
@@ -249,11 +274,11 @@ impl<T> Machine<T>
                             }
                         }
                     },
-                    Instruction::PushPos(id) => {
+                    PushPos(id) => {
                         pos_stack.push((id, i));
                         pc += 1;
                     },
-                    Instruction::SavePos => {
+                    SavePos => {
                         if let Some((id, j)) = pos_stack.pop() {
                             if j != i {
                                 match T::from_str(self.rule_names[id].as_str()) {
@@ -264,18 +289,18 @@ impl<T> Machine<T>
                         }
                         pc += 1;
                     },
-                    Instruction::Fail => {
+                    Fail => {
                         fail = true;
                     },
-                    Instruction::FailTwice => {
+                    FailTwice => {
                         stack.pop();
                         fail = true;
                     },
-                    Instruction::Stop => {
+                    Stop => {
                         if i < input.len() { fail = true; }
                         break;
                     },
-                    Instruction::ToggleSkip => {
+                    ToggleSkip => {
                         self.skip_on = !self.skip_on;
                         pc += 1;
                     }
@@ -298,6 +323,8 @@ impl<T> Machine<T>
         let mut rules = token_result.2.drain().collect::<Vec<(Vec<u8>, i32)>>();
         rules.sort_by(|a, b| a.1.cmp(&b.1));
         let rules_map = rules.drain(..).map(|x| String::from_utf8(x.0).ok().unwrap()).collect();
+
+        println!("{:?}", program);
 
         Ok(Machine {
             program: program,
