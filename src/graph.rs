@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::cmp::min;
 use machine;
 
+#[derive(Debug)]
 pub struct CallMetadata {
     pub is_left_call : bool,
     pub is_cyclic : bool,
@@ -98,6 +99,8 @@ pub fn metadata(program : &Vec<machine::Instruction>) -> HashMap<usize, CallMeta
             x.is_cyclic = true;
         }
     }
+
+    println!("{:?}", call_metadata);
 
     call_metadata
 }

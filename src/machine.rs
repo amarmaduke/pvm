@@ -324,8 +324,6 @@ impl<T> Machine<T>
         rules.sort_by(|a, b| a.1.cmp(&b.1));
         let rules_map = rules.drain(..).map(|x| String::from_utf8(x.0).ok().unwrap()).collect();
 
-        println!("{:?}", program);
-
         Ok(Machine {
             program: program,
             rule_names: rules_map,

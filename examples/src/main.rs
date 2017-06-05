@@ -42,18 +42,13 @@ impl FromStr for Rules {
 
 fn main() {
     let minimal_grammar = "
-        main { expr ws }
+        main { expr [ \\t\\r\\n] }
         expr { 
-            expr:1 plus expr:2
-            / expr:2 times expr:3
-            / num
+            open expr:1 ')'
+            / [1-9]
         }
 
-        plus { '+' }
-        times { '*' }
-        num { [1-9][0-9]* }
-
-        ws { [ \\t\\r\\n] }
+        open { '(' }
     ";
     let grammar = "
         main { s expr }
@@ -63,7 +58,7 @@ fn main() {
             / expr:2 times expr:3
             / expr:2 divide expr:3
             / minus expr:4
-            / open expr:0 close
+            / open expr:1 s close
             / num
         }
 
@@ -79,23 +74,20 @@ fn main() {
         ws { [ \\t\\r\\n] }
     ";
 
-    match pvm::Machine::new(&minimal_grammar) {
+    match pvm::Machine::<Rules>::new(&minimal_grammar) {
         Ok(mut machine) => {
-            machine.execute::<Rules>("1+1*2".to_owned().into_bytes());
-            /*
             loop {
                 let mut buffer = String::new();
 
                 match io::stdin().read_line(&mut buffer) {
                     Ok(_) => {
                         if buffer == "quit" { return; }
-                        let output = machine.execute::<Rules>(buffer.into_bytes());
+                        let output = machine.execute(buffer.into_bytes());
                         println!("{:?}", output);
                     },
                     Err(error) => println!("Stdin Error: {}", error)
                 }
             }
-            */
         },
         Err(x) => {
             println!("Encountered error: {}", x);
