@@ -298,12 +298,12 @@ fn parse_primary(i : &mut usize, tokens : &Vec<Token>) -> Result<ast::Pattern, u
                         match tokens.get(*i) {
                             Some(&Token::Number(num)) => {
                                 *i += 1;
-                                Ok(ast::Pattern::Variable(id, num))
+                                Ok(ast::Pattern::Variable(id, num, 0, false))
                             },
                             _ => Err(*i)
                         }
                     } else {
-                        Ok(ast::Pattern::Variable(id, -1))
+                        Ok(ast::Pattern::Variable(id, -1, 0, false))
                     }
                 } else {
                     *i = backtrack;

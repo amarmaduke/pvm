@@ -11,7 +11,7 @@ pub enum Pattern {
     CharClass(Vec<(u8, Option<u8>)>),
     CharSequence(Vec<u8>),
     CharAny,
-    Variable(i32, i32),
+    Variable(i32, i32, usize, bool),
     Choice(Box<Pattern>, Box<Pattern>),
     ZeroOrMore(Box<Pattern>),
     OneOrMore(Box<Pattern>),
@@ -64,7 +64,7 @@ impl Grammar {
             &Pattern::CharClass(ref data) => Grammar::compile_char_class(data),
             &Pattern::CharSequence(ref data) => Grammar::compile_char_sequence(data),
             &Pattern::CharAny => Grammar::compile_char_any(),
-            &Pattern::Variable(id, precedence) => Grammar::compile_variable(id, precedence),
+            &Pattern::Variable(id, precedence, _, _) => Grammar::compile_variable(id, precedence),
             &Pattern::Choice(ref le, ref ri) => Grammar::compile_choice(le, ri),
             &Pattern::ZeroOrMore(ref data) => Grammar::compile_zero_or_more(data),
             &Pattern::OneOrMore(ref data) => Grammar::compile_one_or_more(data),
@@ -182,6 +182,19 @@ impl Grammar {
         }
         result
     }
+
+    /* Algorithm to find left recursive calls
+        - First label all calls with a unique id
+        - Starting with the root, iterate through the tree structure
+        - If you find input consuming calls (that are not optional) mark as consuming input
+        - Choices should be handled independently (and have there own mark for consumig input)
+        - Calls recursively do the same
+        - If a call turns out to be recursive, check the cycle to see if any input is consumed
+            - If no input is consumed in the call chain then it is left recursive
+            - Otherwise it is right recursive
+            - May need to handle mutually recursive rules with a special method
+        - You should give each call it's own call stack (with the rule, call id, and if it matched any input)
+    */
 }
 
 #[cfg(test)]
@@ -226,9 +239,9 @@ mod tests {
             'c' as u8
         ]);
         let main = Pattern::Sequence(vec![
-            Box::new(Pattern::Variable(1, 1)),
-            Box::new(Pattern::Variable(2, 1)),
-            Box::new(Pattern::Variable(3, 1)),
+            Box::new(Pattern::Variable(1, 1, 0, false)),
+            Box::new(Pattern::Variable(2, 1, 0, false)),
+            Box::new(Pattern::Variable(3, 1, 0, false)),
         ]);
 
         let grammar = Grammar {
@@ -307,7 +320,7 @@ mod tests {
         let a = Pattern::OneOrMore(
             Box::new(Pattern::CharSequence(vec!['a' as u8])));
         let main = Pattern::Sequence(vec![
-            Box::new(Pattern::Optional(Box::new(Pattern::Variable(1, 1)))),
+            Box::new(Pattern::Optional(Box::new(Pattern::Variable(1, 1, 0, false)))),
             Box::new(Pattern::CharSequence(vec!['b' as u8]))
         ]);
 
