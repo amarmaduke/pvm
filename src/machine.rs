@@ -3,13 +3,12 @@ use std::hash::Hash;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 use parser;
-use graph;
 
 #[derive(Debug, Copy, Clone)]
 enum StackFrame {
     Return(isize),
     Backtrack(isize, usize),
-    PrecedenceBacktrack(isize, isize, usize, Option<usize>, isize, bool)
+    PrecedenceBacktrack(isize, isize, usize, Option<usize>, isize, bool, bool)
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -23,7 +22,7 @@ pub enum Instruction {
     Choice(isize),
     Jump(isize),
     Call(isize),
-    PrecedenceCall(isize, isize),
+    PrecedenceCall(isize, isize, bool),
     Return,
     Commit(isize),
     BackCommit(isize),
@@ -43,6 +42,7 @@ pub struct Machine<T>
     pub rule_names: Vec<String>,
     pub skip : Vec<(u8, u8)>,
     pub skip_on : bool,
+    pub jump_table : Vec<isize>,
     pub marker : PhantomData<T>
 }
 
@@ -72,12 +72,9 @@ impl<T> Machine<T>
         let mut pc = 0;
         let mut i = 0;
         let mut fail = false;
-        let metadata = graph::metadata(&self.program);
-
-        println!("{:?}", self.program);
 
         loop {
-            println!("i: {}, fail: {}, pc: {}, \n {:?} \n {:?}", i, fail, pc, stack, pos_stack);
+            //println!("i: {}, fail: {}, pc: {}, \n {:?} \n {:?}", i, fail, pc, stack, pos_stack);
             if self.skip_on {
                 while i < input.len() && self.skip_parser(input[i]) {
                     i += 1;
@@ -93,9 +90,9 @@ impl<T> Machine<T>
                             i = j;
                             fail = false;
                         },
-                        PrecedenceBacktrack(ret, a, j, jp, k, f) => {
+                        PrecedenceBacktrack(ret, a, j, jp, k, f, is_left) => {
                             if (jp.is_none() || i > jp.unwrap()) && i != j {
-                                stack.push(PrecedenceBacktrack(ret, a, j, Some(i), k, true));
+                                stack.push(PrecedenceBacktrack(ret, a, j, Some(i), k, true, is_left));
                                 pc = a;
                                 i = j;
                                 fail = false;
@@ -103,11 +100,8 @@ impl<T> Machine<T>
                                 i = jp.unwrap();
                                 fail = f;
                                 
-                                let m = metadata.get(&(ret as usize))
-                                    .expect(&format!("Metadata generation missed call at instruction #{}", ret));
-                                let is_left_recursive = m.is_left_call && m.is_cyclic;
-                                if is_left_recursive {
-                                    pc = m.jump_position as isize;
+                                if is_left {
+                                    pc = self.jump_table[ret as usize];
                                     while let Some(&StackFrame::Backtrack(_, _)) = stack.get(stack.len() - 1) {
                                         stack.pop();
                                     }
@@ -185,18 +179,18 @@ impl<T> Machine<T>
                         stack.push(StackFrame::Return(pc + 1));
                         pc += j;
                     },
-                    PrecedenceCall(n, k) => {
+                    PrecedenceCall(n, k, is_left) => {
                         let pc_clone = pc;
                         let stack_update = {
                             let mut result = false;
                             let memo = stack.iter().find(|&&x| match x {
-                                StackFrame::PrecedenceBacktrack(_, a, j, _, _, _) => {
+                                StackFrame::PrecedenceBacktrack(_, a, j, _, _, _, _) => {
                                     pc + n == a && i == j
                                 },
                                 _ => false
                             });
                             match memo {
-                                Some(&StackFrame::PrecedenceBacktrack(_, _, _, jp, kp, _)) => {
+                                Some(&StackFrame::PrecedenceBacktrack(_, _, _, jp, kp, _, _)) => {
                                     match jp {
                                         Some(jr) => {
                                             if k >= kp {
@@ -220,26 +214,23 @@ impl<T> Machine<T>
                             result
                         };
                         if stack_update {
-                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone, pc_clone + n, i, None, k, false));
+                            stack.push(StackFrame::PrecedenceBacktrack(pc_clone, pc_clone + n, i, None, k, false, is_left));
                         }
                     },
                     Return => {
                         if let Some(frame) = stack.pop() {
                             if let StackFrame::Return(ret) = frame {
                                 pc = ret;
-                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jp, k, _) = frame {
+                            } else if let StackFrame::PrecedenceBacktrack(ret, a, j, jp, k, _, is_left) = frame {
                                 if jp.is_none() || i > jp.unwrap() {
-                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, Some(i), k, false));
+                                    stack.push(StackFrame::PrecedenceBacktrack(ret, a, j, Some(i), k, false, is_left));
                                     pc = a;
                                     i = j;
                                 } else {
                                     i = jp.unwrap();
                                     
-                                    let m = metadata.get(&(ret as usize))
-                                        .expect(&format!("Metadata generation missed call at instruction #{}", ret));
-                                    let is_left_recursive = m.is_left_call && m.is_cyclic;
-                                    if is_left_recursive {
-                                        pc = m.jump_position as isize;
+                                    if is_left {
+                                        pc = self.jump_table[ret as usize];
                                         while let Some(&StackFrame::Backtrack(_, _)) = stack.get(stack.len() - 1) {
                                             stack.pop();
                                         }
@@ -315,20 +306,38 @@ impl<T> Machine<T>
         }
     }
 
+    pub fn get_jump_table(program : &Vec<Instruction>) -> Vec<isize> {
+        let mut result = (0..program.len()).map(|_| -1).collect::<Vec<isize>>();
+        let mut current : isize = -1;
+        
+        for i in (0..program.len()).rev() {
+            match program[i] {
+                Instruction::Return => current = i as isize,
+                _ => { }
+            }
+            result[i] = current;
+        }
+        result
+    }
+
     pub fn new(grammar : &str) -> Result<Machine<T>, usize> {
         let mut token_result = parser::tokenize(grammar);
-        let parse_tree = parser::parse(token_result.0, token_result.1)?;
+        let mut parse_tree = parser::parse(token_result.0, token_result.1)?;
         let program = parse_tree.compile();
 
         let mut rules = token_result.2.drain().collect::<Vec<(Vec<u8>, i32)>>();
         rules.sort_by(|a, b| a.1.cmp(&b.1));
         let rules_map = rules.drain(..).map(|x| String::from_utf8(x.0).ok().unwrap()).collect();
+        let jump_table = Machine::<T>::get_jump_table(&program);
+
+        println!("{:?}", program);
 
         Ok(Machine {
             program: program,
             rule_names: rules_map,
             skip: vec![],
             skip_on: false,
+            jump_table: jump_table,
             marker: PhantomData
         })
     }
@@ -343,11 +352,13 @@ mod tests {
         expected : &Vec<bool>,
         rule_names : Vec<String>)
     {
+        let jump_table = Machine::<String>::get_jump_table(&program);
         let mut machine = Machine::<String> {
             program: program,
             rule_names: rule_names,
             skip: vec![],
             skip_on: false,
+            jump_table: jump_table,
             marker: PhantomData
         };
         assert!(subjects.len() == expected.len());
@@ -366,11 +377,13 @@ mod tests {
         expected : &Vec<bool>,
         rule_names : Vec<String>)
     {
+        let jump_table = Machine::<String>::get_jump_table(&program);
         let mut machine = Machine::<String> {
             program: program,
             rule_names: rule_names,
             skip: vec![],
             skip_on: false,
+            jump_table: jump_table,
             marker: PhantomData
         };
         machine.skip = skip;
@@ -710,7 +723,7 @@ mod tests {
             Instruction::Call(2),
             Instruction::Stop,
             Instruction::Choice(5),
-            Instruction::PrecedenceCall(-1, 0),
+            Instruction::PrecedenceCall(-1, 0, true),
             Instruction::Char(b'+'),
             Instruction::Char(b'n'),
             Instruction::Commit(2),
@@ -728,7 +741,7 @@ mod tests {
             Instruction::Call(2),
             Instruction::Stop,
             Instruction::Choice(5),
-            Instruction::PrecedenceCall(-1, 0),
+            Instruction::PrecedenceCall(-1, 0, true),
             Instruction::Char(b'+'),
             Instruction::Char(b'n'),
             Instruction::Commit(2),
