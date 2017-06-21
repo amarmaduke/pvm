@@ -1,4 +1,7 @@
 use std::str::FromStr;
+use std::path::Path;
+use std::fs::File;
+use std::io::prelude::*;
 use std::hash::Hash;
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -340,6 +343,13 @@ impl<T> Machine<T>
             jump_table: jump_table,
             marker: PhantomData
         })
+    }
+
+    pub fn from_path(path : &Path) -> Result<Machine<T>, usize> {
+        let mut file = File::open(path).ok().expect("rip");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).ok();
+        Machine::new(contents.as_str())
     }
 }
 
