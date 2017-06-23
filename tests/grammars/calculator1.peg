@@ -15,7 +15,7 @@ times { '*' s  }
 divide { '/' s }
 open { '(' s }
 close { ')' s }
-num { [1-9][0-9]* s }
+num { ('0' / [1-9][0-9]*) s }
 
 s { ws* }
 ws { [ \\t\\r\\n] }

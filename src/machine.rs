@@ -333,8 +333,6 @@ impl<T> Machine<T>
         let rules_map = rules.drain(..).map(|x| String::from_utf8(x.0).ok().unwrap()).collect();
         let jump_table = Machine::<T>::get_jump_table(&program);
 
-        println!("{:?}", program);
-
         Ok(Machine {
             program: program,
             rule_names: rules_map,

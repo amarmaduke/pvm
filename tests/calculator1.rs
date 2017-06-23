@@ -1,9 +1,12 @@
+extern crate rand;
 extern crate pvm;
 
 use std::path::Path;
 use std::io;
 use std::str::FromStr;
 use std::cmp::Ordering;
+
+use rand::Rng;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum Rules {
@@ -68,15 +71,15 @@ enum Syntax {
     Divide(Box<Syntax>, Box<Syntax>),
     Negation(Box<Syntax>),
     Grouping(Box<Syntax>),
-    Number(i64)
+    Number(f64)
 }
 
 impl Syntax {
-    pub fn eval(&self) -> i64 {
+    pub fn eval(&self) -> f64 {
         Syntax::eval_syntax(self)
     }
 
-    fn eval_syntax(tree : &Syntax) -> i64 {
+    fn eval_syntax(tree : &Syntax) -> f64 {
         use self::Syntax::*;
         match *tree {
             Plus(ref left, ref right) => Syntax::eval_syntax(left) + Syntax::eval_syntax(right),
@@ -89,9 +92,39 @@ impl Syntax {
         }
     }
 
+    pub fn print(&self) -> String {
+        use self::Syntax::*;
+        match *self {
+            Plus(ref left, ref right) => format!("({}+{})", left.print(), right.print()),
+            Minus(ref left, ref right) => format!("({}-{})", left.print(), right.print()),
+            Times(ref left, ref right) => format!("({}*{})", left.print(), right.print()),
+            Divide(ref left, ref right) => format!("({}/{})", left.print(), right.print()),
+            Negation(ref nested) => format!("-{}", nested.print()),
+            Grouping(ref nested) => format!("({})", nested.print()),
+            Number(value) => format!("{}", value)
+        }
+    }
+
+    pub fn gen(total : usize, rng : &mut rand::Rng) -> Syntax {
+        if total > 0 {
+            let choice = rng.next_u32() % 6;
+            match choice {
+                0 => Syntax::Plus(Box::new(Syntax::gen(total - 1, rng)), Box::new(Syntax::gen(total - 1, rng))),
+                1 => Syntax::Minus(Box::new(Syntax::gen(total - 1, rng)), Box::new(Syntax::gen(total - 1, rng))),
+                2 => Syntax::Times(Box::new(Syntax::gen(total - 1, rng)), Box::new(Syntax::gen(total - 1, rng))),
+                3 => Syntax::Divide(Box::new(Syntax::gen(total - 1, rng)), Box::new(Syntax::gen(total - 1, rng))),
+                4 => Syntax::Negation(Box::new(Syntax::gen(total - 1, rng))),
+                5 => Syntax::Grouping(Box::new(Syntax::gen(total - 1, rng))),
+                _ => panic!("Impossible.")
+            }
+        } else {
+            let number = (rng.next_u64() % 100) as f64;
+            Syntax::Number(number)
+        }
+    }
+
     pub fn parse(input : &str, data : &mut Vec<(Rules, usize, usize)>) -> Syntax {
         data.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)).then(order_rule(&a.0, &b.0)));
-        println!("{:?}", data);
         Syntax::parse_expr(0, input, data).0
     }
 
@@ -129,24 +162,70 @@ impl Syntax {
     }
 }
 
-
-
-#[test]
-fn calculator() {
+fn run_test(tree : Syntax) {
     let path = Path::new("./tests/grammars/calculator1.peg");
     match pvm::Machine::<Rules>::from_path(&path) {
         Ok(mut machine) => {
-            println!("Hello");
-            let input = "1+2+3 * 2 *(  2+3  +4)";
-            let mut temp = machine.execute(input.to_string().into_bytes()).ok().unwrap();
+            let input = tree.print();
+            println!("input: {}", input);
+            let mut temp = match machine.execute(input.to_string().into_bytes()) {
+                Ok(x) => x,
+                Err(x) => panic!("Parse Error: {:?}", x)
+            };
             let mut result = temp.drain(..)
                 .filter(|x| x.0 != Rules::S && x.0 != Rules::Ws)
                 .collect();
-            let tree = Syntax::parse(input, &mut result);
-            println!("{:?}", tree);
-            let eval = tree.eval();
-            println!("{:?}", eval);
+            let new_tree = Syntax::parse(&input, &mut result);
+            println!("old: {:?}, new: {:?}", tree, new_tree);
+            let new_eval = new_tree.eval();
+            let old_eval = tree.eval();
+            if new_eval.is_nan() || old_eval.is_nan() {
+                assert_eq!(new_eval.is_nan(), old_eval.is_nan());
+            } else {
+                assert_eq!(new_eval, old_eval);
+            }
         },
-        Err(x) => { }
+        Err(x) => {
+            println!("Error: {}", x); 
+            assert!(false);
+        }
+    }
+}
+
+#[test]
+fn constants() {
+    let data = vec![
+        Syntax::Number(0f64),
+        Syntax::Number(1f64),
+        Syntax::Number(2f64),
+        Syntax::Number(1000f64),
+        Syntax::Number(10000000f64),
+    ];
+    for tree in data {
+        run_test(tree)
+    }
+}
+
+#[test]
+fn simple_expressions() {
+    let data = vec![
+        Syntax::Grouping(Box::new(Syntax::Divide(
+            Box::new(Syntax::Plus(
+                Box::new(Syntax::Number(4f64)),
+                Box::new(Syntax::Number(6f64)))),
+            Box::new(Syntax::Negation(Box::new(Syntax::Number(6f64))))
+        )))
+    ];
+    for tree in data {
+        run_test(tree)
+    }
+}
+
+#[test]
+fn random_expressions() {
+    let mut rng = rand::thread_rng();
+    for _ in 0..20 {
+        let total = (rng.next_u32() % 10) as usize;
+        run_test(Syntax::gen(total, &mut rng));
     }
 }

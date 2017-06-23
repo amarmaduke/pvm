@@ -27,9 +27,7 @@ impl Grammar {
         let mut lookup = vec![];
 
         self.name_variables();
-        println!("{:?}", self);
         let left_recursive_calls = self.discover_left_recursion();
-        println!("{:?}", left_recursive_calls);
         self.label_variables(&left_recursive_calls);
 
         for p in &self.rules {
@@ -298,7 +296,6 @@ impl Grammar {
                     let is_left_recursive = !stack.iter()
                         .skip_while(|x| x.0 != id)
                         .fold(false, |acc, &x| acc || x.1);
-                    println!("{:?} is_left: {}", stack, is_left_recursive);
                     consumed = if is_left_recursive {
                         for x in stack.iter().skip_while(|x| x.0 != id) {
                             left_calls.insert(x.0);
@@ -346,19 +343,6 @@ impl Grammar {
 
         consumed
     }
-
-    /* Algorithm to find left recursive calls
-        - First label all calls with a unique id
-        - Starting with the root, iterate through the tree structure
-        - If you find input consuming calls (that are not optional) mark as consuming input
-        - Choices should be handled independently (and have there own mark for consumig input)
-        - Calls recursively do the same
-        - If a call turns out to be recursive, check the cycle to see if any input is consumed
-            - If no input is consumed in the call chain then it is left recursive
-            - Otherwise it is right recursive
-            - May need to handle mutually recursive rules with a special method
-        - You should give each call it's own call stack (with the rule, call id, and if it matched any input)
-    */
 }
 
 #[cfg(test)]
