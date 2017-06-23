@@ -162,27 +162,29 @@ impl Syntax {
     }
 }
 
-fn run_test(tree : Syntax) {
+fn run_test(data : Vec<Syntax>) {
     let path = Path::new("./tests/grammars/calculator1.peg");
     match pvm::Machine::<Rules>::from_path(&path) {
         Ok(mut machine) => {
-            let input = tree.print();
-            println!("input: {}", input);
-            let mut temp = match machine.execute(input.to_string().into_bytes()) {
-                Ok(x) => x,
-                Err(x) => panic!("Parse Error: {:?}", x)
-            };
-            let mut result = temp.drain(..)
-                .filter(|x| x.0 != Rules::S && x.0 != Rules::Ws)
-                .collect();
-            let new_tree = Syntax::parse(&input, &mut result);
-            println!("old: {:?}, new: {:?}", tree, new_tree);
-            let new_eval = new_tree.eval();
-            let old_eval = tree.eval();
-            if new_eval.is_nan() || old_eval.is_nan() {
-                assert_eq!(new_eval.is_nan(), old_eval.is_nan());
-            } else {
-                assert_eq!(new_eval, old_eval);
+            for tree in data {
+                let input = tree.print();
+                println!("input: {}", input);
+                let mut temp = match machine.execute(input.to_string().into_bytes()) {
+                    Ok(x) => x,
+                    Err(x) => panic!("Parse Error: {:?}", x)
+                };
+                let mut result = temp.drain(..)
+                    .filter(|x| x.0 != Rules::S && x.0 != Rules::Ws)
+                    .collect();
+                let new_tree = Syntax::parse(&input, &mut result);
+                println!("old: {:?}, new: {:?}", tree, new_tree);
+                let new_eval = new_tree.eval();
+                let old_eval = tree.eval();
+                if new_eval.is_nan() || old_eval.is_nan() {
+                    assert_eq!(new_eval.is_nan(), old_eval.is_nan());
+                } else {
+                    assert_eq!(new_eval, old_eval);
+                }
             }
         },
         Err(x) => {
@@ -201,9 +203,7 @@ fn constants() {
         Syntax::Number(1000f64),
         Syntax::Number(10000000f64),
     ];
-    for tree in data {
-        run_test(tree)
-    }
+    run_test(data);
 }
 
 #[test]
@@ -216,16 +216,16 @@ fn simple_expressions() {
             Box::new(Syntax::Negation(Box::new(Syntax::Number(6f64))))
         )))
     ];
-    for tree in data {
-        run_test(tree)
-    }
+    run_test(data);
 }
 
 #[test]
 fn random_expressions() {
     let mut rng = rand::thread_rng();
+    let mut data = vec![];
     for _ in 0..20 {
         let total = (rng.next_u32() % 10) as usize;
-        run_test(Syntax::gen(total, &mut rng));
+        data.push(Syntax::gen(total, &mut rng));
     }
+    run_test(data);
 }
