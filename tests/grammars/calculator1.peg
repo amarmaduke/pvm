@@ -1,0 +1,21 @@
+main { s expr }
+expr { 
+    expr:1 plus expr:2
+    / expr:1 minus expr:2
+    / expr:2 times expr:3
+    / expr:2 divide expr:3
+    / minus expr:4
+    / open expr:1 s close
+    / num
+}
+
+plus { '+' s }
+minus { '-' s }
+times { '*' s  }
+divide { '/' s }
+open { '(' s }
+close { ')' s }
+num { ('0' / [1-9][0-9]*) s }
+
+s { ws* }
+ws { [ \\t\\r\\n] }

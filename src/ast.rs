@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use machine;
 
 #[derive(Debug)]
@@ -11,7 +12,7 @@ pub enum Pattern {
     CharClass(Vec<(u8, Option<u8>)>),
     CharSequence(Vec<u8>),
     CharAny,
-    Variable(i32, i32),
+    Variable(i32, i32, usize, bool),
     Choice(Box<Pattern>, Box<Pattern>),
     ZeroOrMore(Box<Pattern>),
     OneOrMore(Box<Pattern>),
@@ -21,9 +22,13 @@ pub enum Pattern {
 }
 
 impl Grammar {
-    pub fn compile(&self) -> Vec<machine::Instruction> {
+    pub fn compile(&mut self) -> Vec<machine::Instruction> {
         let mut rules = Vec::new();
         let mut lookup = vec![];
+
+        self.name_variables();
+        let left_recursive_calls = self.discover_left_recursion();
+        self.label_variables(&left_recursive_calls);
 
         for p in &self.rules {
             rules.push(Grammar::compile_pattern(p));
@@ -51,9 +56,9 @@ impl Grammar {
                 let dist = lookup[r as usize] - i as isize;
                 result[i] = machine::Instruction::Call(dist as isize);
             }
-            if let machine::Instruction::PrecedenceCall(r, precedence) = result[i] {
+            if let machine::Instruction::PrecedenceCall(r, precedence, is_left) = result[i] {
                 let dist = lookup[r as usize] - i as isize;
-                result[i] = machine::Instruction::PrecedenceCall(dist as isize, precedence);
+                result[i] = machine::Instruction::PrecedenceCall(dist as isize, precedence, is_left);
             }
         }
         result
@@ -64,7 +69,7 @@ impl Grammar {
             &Pattern::CharClass(ref data) => Grammar::compile_char_class(data),
             &Pattern::CharSequence(ref data) => Grammar::compile_char_sequence(data),
             &Pattern::CharAny => Grammar::compile_char_any(),
-            &Pattern::Variable(id, precedence) => Grammar::compile_variable(id, precedence),
+            &Pattern::Variable(id, precedence, _, is_left) => Grammar::compile_variable(id, precedence, is_left),
             &Pattern::Choice(ref le, ref ri) => Grammar::compile_choice(le, ri),
             &Pattern::ZeroOrMore(ref data) => Grammar::compile_zero_or_more(data),
             &Pattern::OneOrMore(ref data) => Grammar::compile_one_or_more(data),
@@ -104,11 +109,11 @@ impl Grammar {
         vec![machine::Instruction::Any]
     }
 
-    fn compile_variable(id : i32, precedence : i32) -> Vec<machine::Instruction> {
-        if precedence == -1 {
+    fn compile_variable(id : i32, precedence : i32, is_left : bool) -> Vec<machine::Instruction> {
+        if precedence == -1 && !is_left {
             vec![machine::Instruction::Call(id as isize)]
         } else {
-            vec![machine::Instruction::PrecedenceCall(id as isize, precedence as isize)]
+            vec![machine::Instruction::PrecedenceCall(id as isize, precedence as isize, is_left)]
         }
     }
 
@@ -182,24 +187,183 @@ impl Grammar {
         }
         result
     }
+
+    fn name_variables(&mut self) {
+        let mut id = 0;
+        for pattern in &mut self.rules {
+            Grammar::name_pattern(pattern, &mut id);
+        }
+    }
+
+    fn name_pattern(pattern : &mut Pattern, id : &mut usize) {
+        use self::Pattern::*;
+        match *pattern {
+            Variable(_, _, ref mut name, _) => { 
+                *name = *id;
+                *id += 1
+            },
+            Choice(ref mut le, ref mut ri) => { 
+                Grammar::name_pattern(le, id); 
+                Grammar::name_pattern(ri, id);
+            },
+            ZeroOrMore(ref mut data) => {
+                Grammar::name_pattern(data, id);
+            },
+            OneOrMore(ref mut data) => {
+                Grammar::name_pattern(data, id);
+            },
+            Sequence(ref mut data) => {
+                for pattern in data {
+                    Grammar::name_pattern(pattern, id);
+                }
+            },
+            Optional(ref mut data) => {
+                Grammar::name_pattern(data, id);
+            },
+            Lookahead(_, ref mut data) => {
+                Grammar::name_pattern(data, id);
+            },
+            _ => { }
+        }
+    }
+
+    fn label_variables(&mut self, left_recursive_calls : &HashSet<usize>)
+    {
+        for pattern in &mut self.rules {
+            Grammar::label_pattern(pattern, left_recursive_calls);
+        }
+    }
+
+    fn label_pattern(pattern : &mut Pattern, left_recursive_calls : &HashSet<usize>) {
+        use self::Pattern::*;
+        match *pattern {
+            Variable(_, _, name, ref mut is_left_recursive) => {
+                if left_recursive_calls.contains(&name) {
+                    *is_left_recursive = true;
+                }
+            },
+            Choice(ref mut le, ref mut ri) => { 
+                Grammar::label_pattern(le, left_recursive_calls); 
+                Grammar::label_pattern(ri, left_recursive_calls);
+            },
+            ZeroOrMore(ref mut data) => {
+                Grammar::label_pattern(data, left_recursive_calls);
+            },
+            OneOrMore(ref mut data) => {
+                Grammar::label_pattern(data, left_recursive_calls);
+            },
+            Sequence(ref mut data) => {
+                for pattern in data {
+                    Grammar::label_pattern(pattern, left_recursive_calls);
+                }
+            },
+            Optional(ref mut data) => {
+                Grammar::label_pattern(data, left_recursive_calls);
+            },
+            Lookahead(_, ref mut data) => {
+                Grammar::label_pattern(data, left_recursive_calls);
+            },
+            _ => { }
+        }
+    }
+
+    fn discover_left_recursion(&self) -> HashSet<usize> {
+        let mut result = HashSet::new();
+        let mut right_calls = HashSet::new();
+        self.traverse_pattern(&self.rules[0], &mut vec![], &mut result, &mut right_calls, false);
+        result
+    }
+
+    fn traverse_pattern(&self,
+        pattern : &Pattern,
+        stack : &mut Vec<(usize, bool)>,
+        left_calls : &mut HashSet<usize>,
+        right_calls : &mut HashSet<usize>,
+        mut consumed : bool)
+        -> bool
+    {
+        use self::Pattern::*;
+
+        match pattern {
+            &CharClass(_) | &CharSequence(_) | &CharAny => { consumed = true; },
+            &Variable(r, _, id, _) => {
+                if left_calls.contains(&id) {
+                    
+                } else if right_calls.contains(&id) {
+                    consumed = true;
+                } else if stack.iter().find(|&&x| x.0 == id).is_some() {
+                    // We've found a cycle
+                    let is_left_recursive = !stack.iter()
+                        .skip_while(|x| x.0 != id)
+                        .fold(false, |acc, &x| acc || x.1);
+                    consumed = if is_left_recursive {
+                        for x in stack.iter().skip_while(|x| x.0 != id) {
+                            left_calls.insert(x.0);
+                        }
+                        false
+                    } else {
+                        for x in stack.iter().skip_while(|x| x.0 != id) {
+                            right_calls.insert(x.0);
+                        }
+                        true
+                    };
+                    while let Some(x) = stack.pop() {
+                        if x.0 == id { break; }
+                    }
+                } else {
+                    stack.push((id, consumed));
+                    let tmp = self.traverse_pattern(&self.rules[r as usize], stack, left_calls, right_calls, false);
+                    consumed = consumed || tmp;
+                }
+            },
+            &Choice(ref le, ref ri) => {
+                let (tmp1, tmp2) = (
+                    self.traverse_pattern(le, stack, left_calls, right_calls, consumed),
+                    self.traverse_pattern(ri, stack, left_calls, right_calls, consumed));
+                consumed = consumed || (tmp1 && tmp2);
+            },
+            &ZeroOrMore(ref p) | &Optional(ref p) => {
+                self.traverse_pattern(p, stack,  left_calls, right_calls, consumed);
+            },
+            &OneOrMore(ref p) => {
+                let tmp = self.traverse_pattern(p, stack,  left_calls, right_calls, consumed);
+                consumed = consumed || tmp;
+            },
+            &Sequence(ref data) => {
+                for p in data {
+                    let tmp = self.traverse_pattern(p, stack,  left_calls, right_calls, consumed);
+                    consumed = consumed || tmp;
+                }
+            },
+            &Lookahead(_, ref p) => {
+                let tmp = self.traverse_pattern(p, stack,  left_calls, right_calls, consumed);
+                consumed = consumed || tmp;
+            }
+        }
+
+        consumed
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dummy::Dummy;
+    use std::marker::PhantomData;
 
-    fn execute_test(grammar : &Grammar, subjects : &Vec<&str>, expected : &Vec<bool>, rule_names : Vec<String>) {
+    fn execute_test(grammar : &mut Grammar, subjects : &Vec<&str>, expected : &Vec<bool>, rule_names : Vec<String>) {
         let program = grammar.compile();
-        let mut machine = machine::Machine {
+        let jump_table = machine::Machine::<String>::get_jump_table(&program);
+        let mut machine = machine::Machine::<String> {
             program: program,
             rule_names: rule_names,
             skip: vec![],
-            skip_on: false
+            skip_on: false,
+            jump_table: jump_table,
+            marker: PhantomData
         };
         assert!(subjects.len() == expected.len());
         for i in 0..expected.len() {
-            let result = machine.execute::<Dummy>(subjects[i].to_string().into_bytes());
+            let result = machine.execute(subjects[i].to_string().into_bytes());
             let fail = result.is_err();
             println!("{:?}", machine.program);
             println!("{}", subjects[i]);
@@ -225,12 +389,12 @@ mod tests {
             'c' as u8
         ]);
         let main = Pattern::Sequence(vec![
-            Box::new(Pattern::Variable(1, 1)),
-            Box::new(Pattern::Variable(2, 1)),
-            Box::new(Pattern::Variable(3, 1)),
+            Box::new(Pattern::Variable(1, 1, 0, false)),
+            Box::new(Pattern::Variable(2, 1, 0, false)),
+            Box::new(Pattern::Variable(3, 1, 0, false)),
         ]);
 
-        let grammar = Grammar {
+        let mut grammar = Grammar {
             rules: vec![
                 main,
                 Pattern::CharAny,
@@ -242,7 +406,7 @@ mod tests {
         let subjects = vec!["azabc", "Bkabc", "AAabc", "aqd", "xyz"];
         let expected = vec![true, true, true, false, false];
         let rule_names = vec!["main".to_string(), "any".to_string(), "char_class".to_string(), "char_seq".to_string()];
-        execute_test(&grammar, &subjects, &expected, rule_names);
+        execute_test(&mut grammar, &subjects, &expected, rule_names);
     }
 
     #[test]
@@ -262,7 +426,7 @@ mod tests {
             ])),
         );
 
-        let grammar = Grammar {
+        let mut grammar = Grammar {
             rules: vec![
                 main
             ],
@@ -271,7 +435,7 @@ mod tests {
         let subjects = vec!["b", "a", "z", "aa", ""];
         let expected = vec![true, true, true, false, false];
         let rule_names = vec!["main".to_string()];
-        execute_test(&grammar, &subjects, &expected, rule_names);
+        execute_test(&mut grammar, &subjects, &expected, rule_names);
     }
 
     #[test]
@@ -285,7 +449,7 @@ mod tests {
             ))
         );
 
-        let grammar = Grammar {
+        let mut grammar = Grammar {
             rules: vec![
                 main
             ],
@@ -294,7 +458,7 @@ mod tests {
         let subjects = vec!["a", "aaaa", "", "b", "bbbbb", "c"];
         let expected = vec![true, true, true, true, true, false];
         let rule_names = vec!["main".to_string()];
-        execute_test(&grammar, &subjects, &expected, rule_names);
+        execute_test(&mut grammar, &subjects, &expected, rule_names);
     }
 
     #[test]
@@ -306,11 +470,11 @@ mod tests {
         let a = Pattern::OneOrMore(
             Box::new(Pattern::CharSequence(vec!['a' as u8])));
         let main = Pattern::Sequence(vec![
-            Box::new(Pattern::Optional(Box::new(Pattern::Variable(1, 1)))),
+            Box::new(Pattern::Optional(Box::new(Pattern::Variable(1, 1, 0, false)))),
             Box::new(Pattern::CharSequence(vec!['b' as u8]))
         ]);
 
-        let grammar = Grammar {
+        let mut grammar = Grammar {
             rules: vec![
                 main,
                 a
@@ -320,6 +484,6 @@ mod tests {
         let subjects = vec!["b", "ab", "aaaaab", "", "bb"];
         let expected = vec![true, true, true, false, false];
         let rule_names = vec!["main".to_string(), "a".to_string()];
-        execute_test(&grammar, &subjects, &expected, rule_names);
+        execute_test(&mut grammar, &subjects, &expected, rule_names);
     }
 }
