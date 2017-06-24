@@ -7,7 +7,7 @@ description = "A parsing virtual machine with a focus on expressibility of gramm
 repository = "https://github.com/amarmaduke/pvm"
 readme = "README.md"
 
-keywords = ["parser", "parsing", "left-recursion", "mutual-recursion", "peg", "parsing-expression-grammars", "virtual", "machine"]
+keywords = ["parser", "parsing", "peg", "virtual", "machine"]
 categories = ["parsing"]
 
 license = "MIT"
