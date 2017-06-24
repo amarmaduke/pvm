@@ -3,6 +3,15 @@ name = "pvm"
 version = "0.1.0"
 authors = ["Andrew Marmaduke <marmaduke.andrew@gmail.com>"]
 
+description = "A parsing virtual machine with a focus on expressibility of grammars."
+repository = "https://github.com/amarmaduke/pvm"
+readme = "README.md"
+
+keywords = ["parser", "parsing", "left-recursion", "mutual-recursion", "peg", "parsing-expression-grammars", "virtual", "machine"]
+categories = ["parsing"]
+
+license = "MIT"
+
 [dependencies]
 
 
